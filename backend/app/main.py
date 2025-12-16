@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.gemini_analyzer import analyze_frames_batch
+from app.gemini_analyzer import analyze_frames_batch, QuotaExhaustedError, ServiceUnavailableError
 from app.logger import get_logger
 from app.models import (
     AnalysisConfig,
@@ -43,7 +43,7 @@ async def health():
     return {"status": "healthy"}
 
 
-async def process_videos(video_data: list[tuple], config: AnalysisConfig) -> list[FrameAnalysis]:
+async def process_videos(video_data: list[tuple], config: AnalysisConfig) -> tuple[list[FrameAnalysis], bool]:
     """Process videos and analyze frames. Returns list of FrameAnalysis."""
     logger.info(
         f"⚙️  Configuration: frame_interval={config.frame_interval}s, max_duration={config.max_duration}s"
@@ -52,6 +52,7 @@ async def process_videos(video_data: list[tuple], config: AnalysisConfig) -> lis
 
     all_frames_data = []
     total_frames = 0
+    quota_exhausted = False
 
     try:
         logger.info("📥 Step 1: Extracting frames from videos...")
@@ -93,7 +94,28 @@ async def process_videos(video_data: list[tuple], config: AnalysisConfig) -> lis
         logger.info("🤖 Step 2: Analyzing frames with Gemini AI...")
 
         # Step 2: Analyze frames with Gemini
-        gemini_results = await analyze_frames_batch(all_frames_data, None)
+        try:
+            gemini_results = await analyze_frames_batch(all_frames_data, None)
+        except ServiceUnavailableError as e:
+            logger.error(f"❌ {str(e)}")
+            raise RuntimeError(str(e))
+        # Note: QuotaExhaustedError is now handled by returning partial results
+
+        # Check if quota was exhausted (indicated by default responses with quota error messages)
+        quota_exhausted = any(
+            "quota" in result.get("tactical_notes", "").lower() 
+            and "exhausted" in result.get("tactical_notes", "").lower()
+            for result in gemini_results
+        )
+        
+        if quota_exhausted:
+            successful_frames = sum(
+                1 for result in gemini_results 
+                if "quota" not in result.get("tactical_notes", "").lower()
+            )
+            logger.warning(
+                f"⚠️  Quota exhausted: {successful_frames}/{len(gemini_results)} frames successfully analyzed"
+            )
 
         logger.info(f"✅ Step 2 complete: Analyzed {len(gemini_results)} frames")
         logger.info("🔄 Step 3: Transforming results...")
@@ -107,7 +129,7 @@ async def process_videos(video_data: list[tuple], config: AnalysisConfig) -> lis
         logger.info(f"✅ Step 3 complete: Transformed {len(frame_analyses)} frame analyses")
         logger.info(f"✨ Analysis complete: {len(frame_analyses)} frames analyzed")
 
-        return frame_analyses
+        return frame_analyses, quota_exhausted
 
     except Exception as e:
         logger.error(f"❌ Analysis failed: {str(e)}", exc_info=True)
@@ -212,17 +234,38 @@ async def analyze_videos(
         # Process videos and return results directly
         try:
             logger.info("🚀 Starting video analysis...")
-            frame_analyses = await process_videos(video_data, config)
+            frame_analyses, quota_exhausted = await process_videos(video_data, config)
             logger.info(f"✅ Analysis complete: {len(frame_analyses)} frames analyzed")
+
+            status = "partial" if quota_exhausted else "completed"
+            if quota_exhausted:
+                logger.warning("⚠️  Returning partial results due to quota exhaustion")
 
             return AnalysisResponse(
                 frames=frame_analyses,
                 total_frames=len(frame_analyses),
-                status="completed",
+                status=status,
             )
         except ValueError as e:
-            logger.error(f"❌ Validation error: {str(e)}")
-            raise HTTPException(status_code=400, detail=str(e))
+            error_msg = str(e)
+            logger.error(f"❌ Validation error: {error_msg}")
+            # Check if it's a quota error
+            if "quota" in error_msg.lower() or "daily limit" in error_msg.lower():
+                raise HTTPException(
+                    status_code=429,
+                    detail=error_msg
+                )
+            raise HTTPException(status_code=400, detail=error_msg)
+        except RuntimeError as e:
+            error_msg = str(e)
+            logger.error(f"❌ Service error: {error_msg}")
+            # Check if it's a service unavailable error
+            if "unavailable" in error_msg.lower() or "overloaded" in error_msg.lower():
+                raise HTTPException(
+                    status_code=503,
+                    detail=error_msg
+                )
+            raise HTTPException(status_code=500, detail=error_msg)
         except Exception as e:
             logger.error(f"❌ Analysis failed: {str(e)}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")

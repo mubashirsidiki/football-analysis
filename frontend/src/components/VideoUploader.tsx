@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react'
 import { Button } from './ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card'
 import { uploadVideos } from '@/lib/api'
-import { FrameAnalysis } from '@/lib/types'
+import { AnalysisResponse } from '@/lib/types'
 import { X, Upload, Video, Settings } from 'lucide-react'
 
 interface VideoFile {
@@ -13,7 +13,7 @@ interface VideoFile {
 }
 
 interface VideoUploaderProps {
-  onAnalysisComplete: (frames: FrameAnalysis[]) => void
+  onAnalysisComplete: (result: AnalysisResponse) => void
 }
 
 export default function VideoUploader({ onAnalysisComplete }: VideoUploaderProps) {
@@ -81,14 +81,11 @@ export default function VideoUploader({ onAnalysisComplete }: VideoUploaderProps
             return
           }
           
-          if (duration > maxDuration) {
-            resolve({ valid: false, duration, error: `Video duration (${duration.toFixed(1)}s) exceeds ${maxDuration} seconds` })
-          } else {
-            resolve({ valid: true, duration })
-          }
+          // Allow videos of any duration - backend will automatically crop to maxDuration
+          resolve({ valid: true, duration })
         }
         
-        video.onerror = (e) => {
+        video.onerror = () => {
           if (resolved) return
           resolved = true
           clearTimeout(timeout)
@@ -216,7 +213,7 @@ export default function VideoUploader({ onAnalysisComplete }: VideoUploaderProps
         frame_interval: frameInterval,
         max_duration: maxDuration,
       })
-      onAnalysisComplete(result.frames)
+      onAnalysisComplete(result)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to analyze videos')
     } finally {
@@ -241,7 +238,7 @@ export default function VideoUploader({ onAnalysisComplete }: VideoUploaderProps
           <div>
             <CardTitle>Upload Videos</CardTitle>
             <CardDescription>
-              Upload up to 6 videos, each up to {maxDuration}s long (will process first {maxDuration}s if longer)
+              Upload up to 6 videos (will automatically process first {maxDuration}s if longer)
             </CardDescription>
           </div>
           <Button
@@ -345,7 +342,12 @@ export default function VideoUploader({ onAnalysisComplete }: VideoUploaderProps
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium truncate">{video.file.name}</p>
                   <p className="text-xs text-muted-foreground">
-                    {formatDuration(video.duration)} • {formatFileSize(video.file.size)}
+                    {formatDuration(video.duration)}
+                    {video.duration > maxDuration && (
+                      <span className="text-amber-600 dark:text-amber-400"> (will process first {maxDuration}s)</span>
+                    )}
+                    {' • '}
+                    {formatFileSize(video.file.size)}
                   </p>
                 </div>
                 <Button

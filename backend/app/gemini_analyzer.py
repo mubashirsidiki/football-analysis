@@ -11,6 +11,17 @@ from app.logger import get_logger
 
 logger = get_logger("gemini_analyzer")
 
+
+class QuotaExhaustedError(Exception):
+    """Raised when API quota is exhausted (daily limit reached)"""
+    pass
+
+
+class ServiceUnavailableError(Exception):
+    """Raised when service is temporarily unavailable (503)"""
+    pass
+
+
 # Try new SDK first, fallback to old SDK
 try:
     from google import genai
@@ -236,15 +247,53 @@ async def analyze_frame(frame_base64: str, timestamp: float, retries: int = 3) -
                 error_msg = str(e)
                 logger.warning(f"⚠️  API error on attempt {attempt + 1}: {error_msg}")
 
-                # Check for rate limit errors
-                if "429" in error_msg or "quota" in error_msg.lower():
+                # Check for 503 Service Unavailable (overloaded)
+                if "503" in error_msg or "UNAVAILABLE" in error_msg or "overloaded" in error_msg.lower():
                     if attempt < retries - 1:
-                        logger.warning("🚫 Rate limit hit, waiting 60s before retry")
-                        await asyncio.sleep(60)
+                        # Longer backoff for 503 errors (exponential with longer base)
+                        backoff_time = min(30, 5 * (2 ** attempt))  # Max 30 seconds
+                        logger.warning(f"🔄 Service overloaded (503), retrying after {backoff_time}s...")
+                        await asyncio.sleep(backoff_time)
                         continue
-                    logger.error("❌ API quota exceeded")
-                    return get_default_response(timestamp, "API quota exceeded")
+                    logger.error("❌ Service unavailable after retries")
+                    raise ServiceUnavailableError("Gemini API is currently overloaded. Please try again later.")
 
+                # Check for quota exhaustion (429 with quota exceeded message)
+                is_quota_exhausted = (
+                    "429" in error_msg 
+                    and ("quota" in error_msg.lower() or "free_tier" in error_msg.lower() or "RESOURCE_EXHAUSTED" in error_msg)
+                    and ("exceeded" in error_msg.lower() or "limit" in error_msg.lower())
+                )
+                
+                if is_quota_exhausted:
+                    logger.error("❌ API quota exhausted (daily limit reached)")
+                    logger.error("💡 Free tier limit: 20 requests per day. Please upgrade or wait until tomorrow.")
+                    raise QuotaExhaustedError(
+                        "Gemini API daily quota exhausted. Free tier allows 20 requests per day. "
+                        "Please upgrade your plan or try again tomorrow."
+                    )
+
+                # Check for rate limit (429 but not quota exhausted - temporary)
+                if "429" in error_msg and not is_quota_exhausted:
+                    if attempt < retries - 1:
+                        # Extract retry delay from error if available
+                        retry_delay = 60
+                        if "retry" in error_msg.lower() and "s" in error_msg:
+                            try:
+                                # Try to extract retry delay from message
+                                import re
+                                delay_match = re.search(r'(\d+(?:\.\d+)?)\s*s', error_msg)
+                                if delay_match:
+                                    retry_delay = min(120, int(float(delay_match.group(1)) + 5))  # Add 5s buffer, max 120s
+                            except:
+                                pass
+                        logger.warning(f"🚫 Rate limit hit, waiting {retry_delay}s before retry")
+                        await asyncio.sleep(retry_delay)
+                        continue
+                    logger.error("❌ Rate limit exceeded after retries")
+                    return get_default_response(timestamp, "Rate limit exceeded. Please try again later.")
+
+                # Other errors - exponential backoff
                 if attempt < retries - 1:
                     backoff_time = 2**attempt
                     logger.debug(f"⏳ Retrying after {backoff_time}s")
@@ -279,6 +328,10 @@ async def analyze_frames_batch(frames: list, progress_callback=None) -> list:
 
     Returns:
         List of analysis results
+
+    Raises:
+        QuotaExhaustedError: If API quota is exhausted
+        ServiceUnavailableError: If service is unavailable
     """
     total = len(frames)
     logger.info(f"🚀 Starting batch analysis of {total} frames")
@@ -291,21 +344,50 @@ async def analyze_frames_batch(frames: list, progress_callback=None) -> list:
 
     results = []
     completed = 0
+    quota_exhausted = False
 
     for timestamp, _, task in tasks:
-        result = await task
-        results.append(result)
-        completed += 1
+        try:
+            result = await task
+            results.append(result)
+            completed += 1
 
-        if completed % 10 == 0 or completed == total:
-            logger.info(
-                f"📈 Progress: {completed}/{total} frames analyzed ({completed/total*100:.1f}%)"
-            )
+            if completed % 10 == 0 or completed == total:
+                logger.info(
+                    f"📈 Progress: {completed}/{total} frames analyzed ({completed/total*100:.1f}%)"
+                )
 
-        if progress_callback:
-            progress_callback(completed, total)
+            if progress_callback:
+                progress_callback(completed, total)
+        except QuotaExhaustedError as e:
+            logger.error(f"🛑 Quota exhausted after processing {completed}/{total} frames")
+            quota_exhausted = True
+            # Add default responses for remaining frames
+            remaining = total - completed
+            logger.warning(f"⚠️  Adding default responses for {remaining} remaining frames")
+            for i in range(remaining):
+                remaining_timestamp = tasks[completed + i][0]
+                results.append(get_default_response(remaining_timestamp, str(e)))
+            break  # Stop processing immediately
+        except ServiceUnavailableError as e:
+            logger.error(f"🛑 Service unavailable after processing {completed}/{total} frames")
+            # Add default responses for remaining frames
+            remaining = total - completed
+            logger.warning(f"⚠️  Adding default responses for {remaining} remaining frames")
+            for i in range(remaining):
+                remaining_timestamp = tasks[completed + i][0]
+                results.append(get_default_response(remaining_timestamp, str(e)))
+            # Re-raise to be handled at higher level
+            raise
 
     # Sort results by timestamp to maintain order
     results.sort(key=lambda x: x.get("timestamp", 0))
+    
+    if quota_exhausted:
+        logger.warning(f"⚠️  Batch analysis stopped early due to quota exhaustion: {len(results)}/{total} frames processed")
+        logger.warning(f"📊 Returning partial results: {completed} successfully analyzed, {total - completed} with default responses")
+        # Don't raise exception - return partial results instead
+        # The results already contain default responses for failed frames
+    
     logger.info(f"✨ Batch analysis complete: {len(results)} frames analyzed")
     return results

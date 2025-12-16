@@ -1,8 +1,8 @@
-import { useState, ErrorInfo, Component, ReactNode } from 'react'
+import { useState, useEffect, ErrorInfo, Component, ReactNode } from 'react'
 import VideoUploader from './components/VideoUploader'
 import AnalysisTable from './components/AnalysisTable'
 import SummaryPanel from './components/SummaryPanel'
-import { FrameAnalysis } from './lib/types'
+import { FrameAnalysis, AnalysisResponse } from './lib/types'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card'
 import { Button } from './components/ui/button'
 import { AlertCircle } from 'lucide-react'
@@ -66,13 +66,22 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
 function App() {
   const [frames, setFrames] = useState<FrameAnalysis[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [analysisStatus, setAnalysisStatus] = useState<string | null>(null)
 
-  const handleAnalysisComplete = (analysisFrames: FrameAnalysis[]) => {
+  useEffect(() => {
+    console.log('📊 App component mounted')
+    console.log('🎬 Ready to analyze videos')
+  }, [])
+
+  const handleAnalysisComplete = (result: AnalysisResponse) => {
+    console.log('✅ Analysis complete! Received', result.frames.length, 'frames')
+    console.log('📊 Analysis status:', result.status)
     try {
-      if (!Array.isArray(analysisFrames)) {
+      if (!Array.isArray(result.frames)) {
         throw new Error('Invalid frames data received')
       }
-      setFrames(analysisFrames)
+      setFrames(result.frames)
+      setAnalysisStatus(result.status)
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to process analysis results')
@@ -99,6 +108,30 @@ function App() {
                   size="sm"
                   className="mt-4"
                   onClick={() => setError(null)}
+                >
+                  Dismiss
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
+          {analysisStatus === 'partial' && (
+            <Card className="mb-8 border-amber-500 bg-amber-50 dark:bg-amber-950/20">
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
+                  <AlertCircle className="h-5 w-5" />
+                  <div className="flex-1">
+                    <p className="text-sm font-medium">Partial Analysis Results</p>
+                    <p className="text-xs mt-1 text-amber-600 dark:text-amber-500">
+                      API quota exhausted. Some frames were analyzed successfully, but others could not be processed due to daily quota limits (20 requests/day for free tier). Please upgrade your plan or try again tomorrow.
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-4"
+                  onClick={() => setAnalysisStatus(null)}
                 >
                   Dismiss
                 </Button>
