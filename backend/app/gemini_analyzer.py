@@ -8,17 +8,21 @@ from typing import Any
 from dotenv import load_dotenv
 
 from app.logger import get_logger
+from app.models import GeminiStructuredResponse
+from app.prompts import get_analysis_prompt
 
 logger = get_logger("gemini_analyzer")
 
 
 class QuotaExhaustedError(Exception):
     """Raised when API quota is exhausted (daily limit reached)"""
+
     pass
 
 
 class ServiceUnavailableError(Exception):
     """Raised when service is temporarily unavailable (503)"""
+
     pass
 
 
@@ -60,49 +64,7 @@ last_request_time = 0.0
 
 def get_gemini_prompt(timestamp: float) -> str:
     """Generate the prompt for Gemini analysis."""
-    return f"""You are a football match analysis AI.
-
-Analyze the given video frame and return ONLY valid JSON.
-
-Context:
-- This frame is taken from a football match video.
-- Timestamp (seconds): {timestamp}
-
-Tasks:
-1. Detect all visible players and estimate:
-   - Team (Team A or Team B)
-   - Approximate on-field position (x,y or zone)
-2. Detect the ball location if visible.
-3. Identify the current event, if any:
-   - pass, shot, dribble, tackle, interception, clearance, duel, goal, none
-4. Infer tactical or positional insights if possible:
-   - team shape
-   - defensive line height
-   - pressing or counter-attack indicators
-
-Output JSON schema:
-{{
-  "timestamp": number,
-  "players": [
-    {{
-      "id": "string_or_unknown",
-      "team": "A | B",
-      "position": "left/right/center + defensive/midfield/attacking",
-      "coordinates": [x, y]
-    }}
-  ],
-  "ball": {{
-    "visible": boolean,
-    "coordinates": [x, y] | null
-  }},
-  "event": "pass | shot | dribble | tackle | interception | clearance | duel | goal | none",
-  "tactical_notes": "string"
-}}
-
-Rules:
-- Do not include explanations.
-- Do not include markdown.
-- Output JSON only."""
+    return get_analysis_prompt(timestamp)
 
 
 async def analyze_frame(frame_base64: str, timestamp: float, retries: int = 3) -> dict[str, Any]:
@@ -157,26 +119,45 @@ async def analyze_frame(frame_base64: str, timestamp: float, retries: int = 3) -
                         f"⚠️  Frame size ({len(frame_bytes) / 1024 / 1024:.2f} MB) exceeds recommended limit"
                     )
 
-                # Send image + prompt to Gemini
+                # Send image + prompt to Gemini with structured output
                 try:
                     if USE_NEW_SDK:
                         # New SDK: Use types.Part.from_bytes and Client API
+                        # Note: The new SDK's GenerateContentConfig doesn't accept response_json_schema
+                        # We'll use JSON mode and validate with Pydantic after receiving the response
                         image_part = types.Part.from_bytes(data=frame_bytes, mime_type="image/jpeg")
-                        config = types.GenerateContentConfig(response_mime_type="application/json")
+
+                        config = types.GenerateContentConfig(
+                            response_mime_type="application/json",
+                        )
 
                         # New SDK uses synchronous calls, wrap in thread
                         response = await asyncio.to_thread(
                             client.models.generate_content,
                             model="gemini-2.5-flash",  # Use 2.5 for better object detection & segmentation
-                            contents=[image_part, prompt],  # Image first, then prompt (best practice)
+                            contents=[
+                                image_part,
+                                prompt,
+                            ],  # Image first, then prompt (best practice)
                             config=config,
                         )
                     else:
-                        # Legacy SDK: Use generate_content_async with timeout
+                        # Legacy SDK: Use generate_content_async with structured output
                         model = genai.GenerativeModel("gemini-2.5-flash")
+
+                        # Get JSON schema from Pydantic model
+                        json_schema = GeminiStructuredResponse.model_json_schema()
+
+                        # Legacy SDK uses generation_config parameter
+                        generation_config = {
+                            "response_mime_type": "application/json",
+                            "response_json_schema": json_schema,
+                        }
+
                         response = await asyncio.wait_for(
                             model.generate_content_async(
-                                [{"mime_type": "image/jpeg", "data": frame_bytes}, prompt]
+                                [{"mime_type": "image/jpeg", "data": frame_bytes}, prompt],
+                                generation_config=generation_config,
                             ),
                             timeout=30.0,
                         )
@@ -197,7 +178,7 @@ async def analyze_frame(frame_base64: str, timestamp: float, retries: int = 3) -
                 if not response:
                     raise ValueError("Invalid response from Gemini API: empty response")
 
-                # Get text from response (should be JSON when using response_mime_type)
+                # Get text from response (should be valid JSON when using structured output)
                 try:
                     response_text = response.text.strip()
                 except AttributeError:
@@ -211,27 +192,35 @@ async def analyze_frame(frame_base64: str, timestamp: float, retries: int = 3) -
                     f"📥 Received response from Gemini (length: {len(response_text)} chars)"
                 )
 
-                # Parse JSON (should be clean JSON when using response_mime_type="application/json")
+                # Parse and validate JSON using Pydantic
                 try:
-                    # Try direct JSON parse first
-                    result = json.loads(response_text)
-                except json.JSONDecodeError:
-                    # Fallback: remove markdown code blocks if present
-                    if response_text.startswith("```"):
-                        lines = response_text.split("\n")
-                        if len(lines) > 2:
-                            response_text = "\n".join(lines[1:-1])
-                            logger.debug("🧹 Removed markdown code blocks from response")
-                        result = json.loads(response_text)
-                    else:
-                        raise
+                    # Parse JSON first
+                    json_data = json.loads(response_text)
 
-                # Ensure timestamp is set
-                result["timestamp"] = timestamp
-                logger.info(
-                    f"✅ Successfully analyzed frame at {timestamp:.2f}s | Event: {result.get('event', 'none')} | Players: {len(result.get('players', []))}"
-                )
-                return result
+                    # Ensure timestamp is set (in case schema doesn't enforce it)
+                    json_data["timestamp"] = timestamp
+
+                    # Validate using Pydantic model - this ensures type safety and schema compliance
+                    validated_response = GeminiStructuredResponse.model_validate(json_data)
+
+                    logger.info(
+                        f"✅ Successfully analyzed and validated frame at {timestamp:.2f}s | "
+                        f"Event: {validated_response.event} | Players: {len(validated_response.players)}"
+                    )
+
+                    # Return as dict for compatibility with existing code
+                    return validated_response.model_dump()
+
+                except json.JSONDecodeError as e:
+                    logger.error(f"❌ Invalid JSON in response: {str(e)}")
+                    raise ValueError(f"Invalid JSON response from Gemini: {str(e)}")
+                except Exception as e:
+                    # Pydantic validation error
+                    logger.error(f"❌ Pydantic validation error: {str(e)}")
+                    logger.debug(
+                        f"Response text: {response_text[:500]}..."
+                    )  # Log first 500 chars for debugging
+                    raise ValueError(f"Response validation failed: {str(e)}")
 
             except TimeoutError:
                 logger.warning(f"⏱️  Request timeout on attempt {attempt + 1}")
@@ -248,26 +237,40 @@ async def analyze_frame(frame_base64: str, timestamp: float, retries: int = 3) -
                 logger.warning(f"⚠️  API error on attempt {attempt + 1}: {error_msg}")
 
                 # Check for 503 Service Unavailable (overloaded)
-                if "503" in error_msg or "UNAVAILABLE" in error_msg or "overloaded" in error_msg.lower():
+                if (
+                    "503" in error_msg
+                    or "UNAVAILABLE" in error_msg
+                    or "overloaded" in error_msg.lower()
+                ):
                     if attempt < retries - 1:
                         # Longer backoff for 503 errors (exponential with longer base)
-                        backoff_time = min(30, 5 * (2 ** attempt))  # Max 30 seconds
-                        logger.warning(f"🔄 Service overloaded (503), retrying after {backoff_time}s...")
+                        backoff_time = min(30, 5 * (2**attempt))  # Max 30 seconds
+                        logger.warning(
+                            f"🔄 Service overloaded (503), retrying after {backoff_time}s..."
+                        )
                         await asyncio.sleep(backoff_time)
                         continue
                     logger.error("❌ Service unavailable after retries")
-                    raise ServiceUnavailableError("Gemini API is currently overloaded. Please try again later.")
+                    raise ServiceUnavailableError(
+                        "Gemini API is currently overloaded. Please try again later."
+                    )
 
                 # Check for quota exhaustion (429 with quota exceeded message)
                 is_quota_exhausted = (
-                    "429" in error_msg 
-                    and ("quota" in error_msg.lower() or "free_tier" in error_msg.lower() or "RESOURCE_EXHAUSTED" in error_msg)
+                    "429" in error_msg
+                    and (
+                        "quota" in error_msg.lower()
+                        or "free_tier" in error_msg.lower()
+                        or "RESOURCE_EXHAUSTED" in error_msg
+                    )
                     and ("exceeded" in error_msg.lower() or "limit" in error_msg.lower())
                 )
-                
+
                 if is_quota_exhausted:
                     logger.error("❌ API quota exhausted (daily limit reached)")
-                    logger.error("💡 Free tier limit: 20 requests per day. Please upgrade or wait until tomorrow.")
+                    logger.error(
+                        "💡 Free tier limit: 20 requests per day. Please upgrade or wait until tomorrow."
+                    )
                     raise QuotaExhaustedError(
                         "Gemini API daily quota exhausted. Free tier allows 20 requests per day. "
                         "Please upgrade your plan or try again tomorrow."
@@ -282,16 +285,21 @@ async def analyze_frame(frame_base64: str, timestamp: float, retries: int = 3) -
                             try:
                                 # Try to extract retry delay from message
                                 import re
-                                delay_match = re.search(r'(\d+(?:\.\d+)?)\s*s', error_msg)
+
+                                delay_match = re.search(r"(\d+(?:\.\d+)?)\s*s", error_msg)
                                 if delay_match:
-                                    retry_delay = min(120, int(float(delay_match.group(1)) + 5))  # Add 5s buffer, max 120s
-                            except:
+                                    retry_delay = min(
+                                        120, int(float(delay_match.group(1)) + 5)
+                                    )  # Add 5s buffer, max 120s
+                            except (ValueError, AttributeError, IndexError):
                                 pass
                         logger.warning(f"🚫 Rate limit hit, waiting {retry_delay}s before retry")
                         await asyncio.sleep(retry_delay)
                         continue
                     logger.error("❌ Rate limit exceeded after retries")
-                    return get_default_response(timestamp, "Rate limit exceeded. Please try again later.")
+                    return get_default_response(
+                        timestamp, "Rate limit exceeded. Please try again later."
+                    )
 
                 # Other errors - exponential backoff
                 if attempt < retries - 1:
@@ -382,12 +390,16 @@ async def analyze_frames_batch(frames: list, progress_callback=None) -> list:
 
     # Sort results by timestamp to maintain order
     results.sort(key=lambda x: x.get("timestamp", 0))
-    
+
     if quota_exhausted:
-        logger.warning(f"⚠️  Batch analysis stopped early due to quota exhaustion: {len(results)}/{total} frames processed")
-        logger.warning(f"📊 Returning partial results: {completed} successfully analyzed, {total - completed} with default responses")
+        logger.warning(
+            f"⚠️  Batch analysis stopped early due to quota exhaustion: {len(results)}/{total} frames processed"
+        )
+        logger.warning(
+            f"📊 Returning partial results: {completed} successfully analyzed, {total - completed} with default responses"
+        )
         # Don't raise exception - return partial results instead
         # The results already contain default responses for failed frames
-    
+
     logger.info(f"✨ Batch analysis complete: {len(results)} frames analyzed")
     return results

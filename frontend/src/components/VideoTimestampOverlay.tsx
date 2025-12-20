@@ -2,9 +2,8 @@ import { useState, useCallback } from 'react'
 import { Button } from './ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card'
 import { Progress } from './ui/progress'
-import { uploadVideos } from '@/lib/api'
-import { AnalysisResponse } from '@/lib/types'
-import { X, Upload, Video, Settings, Loader2, Sparkles } from 'lucide-react'
+import { addTimestampOverlay } from '@/lib/api'
+import { X, Upload, Video, Settings, Download, Loader2, Clock } from 'lucide-react'
 
 interface VideoFile {
   file: File
@@ -14,18 +13,15 @@ interface VideoFile {
   error?: string
 }
 
-interface VideoUploaderProps {
-  onAnalysisComplete: (result: AnalysisResponse) => void
-}
-
-export default function VideoUploader({ onAnalysisComplete }: VideoUploaderProps) {
+export default function VideoTimestampOverlay() {
   const [videos, setVideos] = useState<VideoFile[]>([])
-  const [isUploading, setIsUploading] = useState(false)
+  const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [frameInterval, setFrameInterval] = useState(1.0)
-  const [maxDuration, setMaxDuration] = useState(10.0)
+  const [maxDuration, setMaxDuration] = useState<number | null>(null)
   const [showSettings, setShowSettings] = useState(false)
-  const [analysisProgress, setAnalysisProgress] = useState(0)
+  const [processedVideoBlob, setProcessedVideoBlob] = useState<Blob | null>(null)
+  const [processedVideoName, setProcessedVideoName] = useState<string | null>(null)
+  const [progress, setProgress] = useState(0)
 
   const validateVideo = (file: File): Promise<{ valid: boolean; duration: number; durationEstimated?: boolean; error?: string }> => {
     return new Promise((resolve) => {
@@ -124,7 +120,7 @@ export default function VideoUploader({ onAnalysisComplete }: VideoUploaderProps
             // Still allow it - let backend handle validation
             const fileSizeMB = file.size / (1024 * 1024)
             duration = Math.max(1, fileSizeMB / 1.5) // ~1.5 MB per second average
-            resolve({ valid: true, duration, durationEstimated: true })
+            resolve({ valid: true, duration })
           }
         }
         
@@ -160,6 +156,8 @@ export default function VideoUploader({ onAnalysisComplete }: VideoUploaderProps
       }
 
       setError(null)
+      setProcessedVideoBlob(null)
+      setProcessedVideoName(null)
       const newVideos: VideoFile[] = []
       const errors: string[] = []
 
@@ -196,7 +194,7 @@ export default function VideoUploader({ onAnalysisComplete }: VideoUploaderProps
     } catch (error) {
       setError(`Failed to process files: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
-  }, [videos.length, maxDuration])
+  }, [videos.length])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -214,50 +212,72 @@ export default function VideoUploader({ onAnalysisComplete }: VideoUploaderProps
       newVideos.splice(index, 1)
       return newVideos
     })
+    setProcessedVideoBlob(null)
+    setProcessedVideoName(null)
   }
 
-  const handleAnalyze = async () => {
+  const handleProcess = async () => {
     if (videos.length === 0) {
       setError('Please upload at least one video')
       return
     }
 
-    setIsUploading(true)
+    setIsProcessing(true)
     setError(null)
-    setAnalysisProgress(0)
-
-    // Simulate progress (since we don't have real-time progress from backend)
-    const progressInterval = setInterval(() => {
-      setAnalysisProgress((prev) => {
-        if (prev >= 90) return prev
-        return prev + Math.random() * 10
-      })
-    }, 500)
+    setProgress(0)
+    setProcessedVideoBlob(null)
+    setProcessedVideoName(null)
 
     try {
+      // Simulate progress (since we don't have real-time progress from backend)
+      const progressInterval = setInterval(() => {
+        setProgress((prev) => {
+          if (prev >= 90) return prev
+          return prev + 5
+        })
+      }, 500)
+
       const files = videos.map((v) => v.file)
-      const result = await uploadVideos(files, {
-        frame_interval: frameInterval,
-        max_duration: maxDuration,
-      })
+      const blob = await addTimestampOverlay(files, maxDuration || undefined)
+      
       clearInterval(progressInterval)
-      setAnalysisProgress(100)
-      // Small delay to show 100% before completing
-      setTimeout(() => {
-        onAnalysisComplete(result)
-        setIsUploading(false)
-        setAnalysisProgress(0)
-      }, 300)
+      setProgress(100)
+
+      // Generate filename
+      const baseName = videos[0].file.name.replace(/\.[^/.]+$/, '')
+      const outputName = `${baseName}_timestamped.mp4`
+
+      setProcessedVideoBlob(blob)
+      setProcessedVideoName(outputName)
     } catch (err) {
-      clearInterval(progressInterval)
-      setAnalysisProgress(0)
-      setError(err instanceof Error ? err.message : 'Failed to analyze videos')
-      setIsUploading(false)
+      setError(err instanceof Error ? err.message : 'Failed to process video')
+      setProgress(0)
+    } finally {
+      setIsProcessing(false)
     }
   }
 
+  const handleDownload = () => {
+    if (!processedVideoBlob || !processedVideoName) return
+
+    const url = URL.createObjectURL(processedVideoBlob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = processedVideoName
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   const formatDuration = (seconds: number) => {
-    return `${seconds.toFixed(1)}s`
+    const hours = Math.floor(seconds / 3600)
+    const minutes = Math.floor((seconds % 3600) / 60)
+    const secs = Math.floor(seconds % 60)
+    const ms = Math.floor((seconds % 1) * 1000)
+    
+    if (hours > 0) {
+      return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${ms.toString().padStart(3, '0')}`
+    }
+    return `${minutes}:${secs.toString().padStart(2, '0')}.${ms.toString().padStart(3, '0')}`
   }
 
   const formatFileSize = (bytes: number) => {
@@ -271,9 +291,9 @@ export default function VideoUploader({ onAnalysisComplete }: VideoUploaderProps
       <CardHeader>
         <div className="flex justify-between items-start">
           <div>
-            <CardTitle>Upload Videos</CardTitle>
+            <CardTitle>Video Timestamp Overlay</CardTitle>
             <CardDescription>
-              Upload up to 6 videos (will automatically process first {maxDuration}s if longer)
+              Add timestamp overlay (HH:MM:SS.mmm) to your videos and download the processed video
             </CardDescription>
           </div>
           <Button
@@ -290,45 +310,53 @@ export default function VideoUploader({ onAnalysisComplete }: VideoUploaderProps
       <CardContent>
         {showSettings && (
           <div className="mb-6 p-4 border rounded-lg space-y-4 bg-muted/50">
-            <h3 className="text-sm font-semibold mb-3">Analysis Settings</h3>
+            <h3 className="text-sm font-semibold mb-3">Processing Settings</h3>
             <div className="space-y-3">
               <div>
                 <label className="text-sm font-medium mb-1 block">
-                  Frame Interval: {frameInterval}s
+                  Max Video Duration: {maxDuration ? `${maxDuration}s` : 'Full video'}
                 </label>
-                <input
-                  type="range"
-                  min="0.5"
-                  max="5"
-                  step="0.5"
-                  value={frameInterval}
-                  onChange={(e) => setFrameInterval(parseFloat(e.target.value))}
-                  className="w-full"
-                />
+                <div className="flex items-center gap-4">
+                  <input
+                    type="range"
+                    min="5"
+                    max="60"
+                    step="1"
+                    value={maxDuration || 60}
+                    onChange={(e) => {
+                      const value = parseFloat(e.target.value)
+                      setMaxDuration(value === 60 ? null : value)
+                    }}
+                    className="flex-1"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setMaxDuration(null)}
+                    disabled={maxDuration === null}
+                  >
+                    Full Video
+                  </Button>
+                </div>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Extract one frame every {frameInterval} seconds
+                  {maxDuration 
+                    ? `Process only first ${maxDuration} seconds of video`
+                    : 'Process full video duration'}
                 </p>
               </div>
-              <div>
-                <label className="text-sm font-medium mb-1 block">
-                  Max Video Duration: {maxDuration}s
-                </label>
-                <input
-                  type="range"
-                  min="5"
-                  max="30"
-                  step="1"
-                  value={maxDuration}
-                  onChange={(e) => setMaxDuration(parseFloat(e.target.value))}
-                  className="w-full"
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Maximum allowed video duration
-                </p>
+              <div className="p-3 bg-background rounded border">
+                <div className="flex items-center gap-2 text-sm">
+                  <Clock className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-muted-foreground">Timestamp Format:</span>
+                  <code className="px-2 py-1 bg-muted rounded text-xs font-mono">00:00:01.234</code>
+                  <span className="text-muted-foreground text-xs">(bottom-right corner)</span>
+                </div>
               </div>
             </div>
           </div>
         )}
+
         <div
           onDrop={handleDrop}
           onDragOver={handleDragOver}
@@ -344,15 +372,15 @@ export default function VideoUploader({ onAnalysisComplete }: VideoUploaderProps
             multiple
             onChange={(e) => handleFileSelect(e.target.files)}
             className="hidden"
-            id="video-upload"
-            disabled={isUploading || videos.length >= 6}
+            id="timestamp-video-upload"
+            disabled={isProcessing || videos.length >= 6}
           />
           <Button
             type="button"
             variant="outline"
-            disabled={isUploading || videos.length >= 6}
+            disabled={isProcessing || videos.length >= 6}
             onClick={() => {
-              document.getElementById('video-upload')?.click()
+              document.getElementById('timestamp-video-upload')?.click()
             }}
           >
             Select Videos
@@ -365,36 +393,18 @@ export default function VideoUploader({ onAnalysisComplete }: VideoUploaderProps
           </div>
         )}
 
-        {isUploading && (
-          <Card className="mt-6 border-primary/50 bg-primary/5">
-            <CardContent className="pt-6">
-              <div className="space-y-4">
-                <div className="flex items-center gap-3">
-                  <div className="relative">
-                    <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                    <Sparkles className="h-4 w-4 text-primary absolute -top-1 -right-1 animate-pulse" />
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="text-sm font-semibold">Analyzing Videos</h3>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Processing frames and analyzing with AI...
-                    </p>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <div className="flex justify-between text-xs text-muted-foreground">
-                    <span>Extracting frames and running AI analysis</span>
-                    <span className="font-medium">{Math.round(analysisProgress)}%</span>
-                  </div>
-                  <Progress value={analysisProgress} className="h-2" />
-                </div>
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <Video className="h-3 w-3" />
-                  <span>Processing {videos.length} video{videos.length > 1 ? 's' : ''}...</span>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+        {isProcessing && (
+          <div className="mt-6 space-y-2">
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">Processing video...</span>
+              <span className="font-medium">{progress}%</span>
+            </div>
+            <Progress value={progress} />
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span>Adding timestamp overlay to frames...</span>
+            </div>
+          </div>
         )}
 
         {videos.length > 0 && (
@@ -414,7 +424,7 @@ export default function VideoUploader({ onAnalysisComplete }: VideoUploaderProps
                     ) : (
                       formatDuration(video.duration)
                     )}
-                    {!video.durationEstimated && video.duration > maxDuration && (
+                    {!video.durationEstimated && maxDuration && video.duration > maxDuration && (
                       <span className="text-amber-600 dark:text-amber-400"> (will process first {maxDuration}s)</span>
                     )}
                     {' • '}
@@ -426,7 +436,7 @@ export default function VideoUploader({ onAnalysisComplete }: VideoUploaderProps
                   variant="ghost"
                   size="icon"
                   onClick={() => removeVideo(index)}
-                  disabled={isUploading}
+                  disabled={isProcessing}
                 >
                   <X className="h-4 w-4" />
                 </Button>
@@ -435,15 +445,37 @@ export default function VideoUploader({ onAnalysisComplete }: VideoUploaderProps
           </div>
         )}
 
-        {videos.length > 0 && (
+        {videos.length > 0 && !isProcessing && !processedVideoBlob && (
           <Button
-            onClick={handleAnalyze}
-            disabled={isUploading}
+            onClick={handleProcess}
+            disabled={isProcessing}
             className="mt-6 w-full"
             size="lg"
           >
-            {isUploading ? 'Starting Analysis...' : 'Analyze All Videos'}
+            <Clock className="mr-2 h-4 w-4" />
+            Add Timestamp Overlay
           </Button>
+        )}
+
+        {processedVideoBlob && processedVideoName && (
+          <div className="mt-6 p-4 border rounded-lg bg-green-50 dark:bg-green-950/20 space-y-4">
+            <div className="flex items-center gap-2 text-green-700 dark:text-green-400">
+              <Download className="h-5 w-5" />
+              <p className="text-sm font-medium">Video processed successfully!</p>
+            </div>
+            <div className="text-sm text-muted-foreground">
+              <p>File: {processedVideoName}</p>
+              <p>Size: {formatFileSize(processedVideoBlob.size)}</p>
+            </div>
+            <Button
+              onClick={handleDownload}
+              className="w-full"
+              size="lg"
+            >
+              <Download className="mr-2 h-4 w-4" />
+              Download Processed Video
+            </Button>
+          </div>
         )}
       </CardContent>
     </Card>

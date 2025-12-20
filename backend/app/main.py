@@ -1,9 +1,10 @@
+import os
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.gemini_analyzer import analyze_frames_batch, QuotaExhaustedError, ServiceUnavailableError
+from app.gemini_analyzer import ServiceUnavailableError, analyze_frames_batch
 from app.logger import get_logger
 from app.models import (
     AnalysisConfig,
@@ -12,6 +13,7 @@ from app.models import (
     transform_gemini_response,
 )
 from app.video_processor import extract_frames
+from app.video_timestamp_overlay import add_timestamp_overlay
 
 load_dotenv()
 
@@ -43,7 +45,9 @@ async def health():
     return {"status": "healthy"}
 
 
-async def process_videos(video_data: list[tuple], config: AnalysisConfig) -> tuple[list[FrameAnalysis], bool]:
+async def process_videos(
+    video_data: list[tuple], config: AnalysisConfig
+) -> tuple[list[FrameAnalysis], bool]:
     """Process videos and analyze frames. Returns list of FrameAnalysis."""
     logger.info(
         f"⚙️  Configuration: frame_interval={config.frame_interval}s, max_duration={config.max_duration}s"
@@ -103,14 +107,15 @@ async def process_videos(video_data: list[tuple], config: AnalysisConfig) -> tup
 
         # Check if quota was exhausted (indicated by default responses with quota error messages)
         quota_exhausted = any(
-            "quota" in result.get("tactical_notes", "").lower() 
+            "quota" in result.get("tactical_notes", "").lower()
             and "exhausted" in result.get("tactical_notes", "").lower()
             for result in gemini_results
         )
-        
+
         if quota_exhausted:
             successful_frames = sum(
-                1 for result in gemini_results 
+                1
+                for result in gemini_results
                 if "quota" not in result.get("tactical_notes", "").lower()
             )
             logger.warning(
@@ -121,10 +126,44 @@ async def process_videos(video_data: list[tuple], config: AnalysisConfig) -> tup
         logger.info("🔄 Step 3: Transforming results...")
 
         # Step 3: Transform results to FrameAnalysis
+        # Note: gemini_results are now validated Pydantic model dicts
         frame_analyses = []
         for gemini_result in gemini_results:
-            frame_analysis = transform_gemini_response(gemini_result)
-            frame_analyses.append(frame_analysis)
+            try:
+                # Validate the result is a dict (from model_dump())
+                if isinstance(gemini_result, dict):
+                    # Re-validate with Pydantic to ensure structure
+                    from app.models import GeminiStructuredResponse
+
+                    validated = GeminiStructuredResponse.model_validate(gemini_result)
+                    frame_analysis = transform_gemini_response(validated)
+                else:
+                    # Fallback: try to convert
+                    from app.models import GeminiStructuredResponse
+
+                    validated = GeminiStructuredResponse.model_validate(gemini_result)
+                    frame_analysis = transform_gemini_response(validated)
+                frame_analyses.append(frame_analysis)
+            except Exception as e:
+                logger.error(f"❌ Error transforming result: {str(e)}", exc_info=True)
+                # Create a default frame analysis for this timestamp
+                from app.models import FrameAnalysis
+
+                frame_analyses.append(
+                    FrameAnalysis(
+                        timestamp=(
+                            gemini_result.get("timestamp", 0.0)
+                            if isinstance(gemini_result, dict)
+                            else 0.0
+                        ),
+                        event="unknown",
+                        ball_position="Not visible",
+                        players_detected=0,
+                        team_a_shape="Unknown",
+                        team_b_shape="Unknown",
+                        tactical_notes=f"Error transforming response: {str(e)}",
+                    )
+                )
 
         logger.info(f"✅ Step 3 complete: Transformed {len(frame_analyses)} frame analyses")
         logger.info(f"✨ Analysis complete: {len(frame_analyses)} frames analyzed")
@@ -251,20 +290,14 @@ async def analyze_videos(
             logger.error(f"❌ Validation error: {error_msg}")
             # Check if it's a quota error
             if "quota" in error_msg.lower() or "daily limit" in error_msg.lower():
-                raise HTTPException(
-                    status_code=429,
-                    detail=error_msg
-                )
+                raise HTTPException(status_code=429, detail=error_msg)
             raise HTTPException(status_code=400, detail=error_msg)
         except RuntimeError as e:
             error_msg = str(e)
             logger.error(f"❌ Service error: {error_msg}")
             # Check if it's a service unavailable error
             if "unavailable" in error_msg.lower() or "overloaded" in error_msg.lower():
-                raise HTTPException(
-                    status_code=503,
-                    detail=error_msg
-                )
+                raise HTTPException(status_code=503, detail=error_msg)
             raise HTTPException(status_code=500, detail=error_msg)
         except Exception as e:
             logger.error(f"❌ Analysis failed: {str(e)}", exc_info=True)
@@ -277,3 +310,144 @@ async def analyze_videos(
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
+@app.post("/api/video/timestamp-overlay")
+async def timestamp_overlay_videos(
+    videos: list[UploadFile] = File(...),
+    max_duration: float = Form(None),
+):
+    """Add timestamp overlay to uploaded videos. Max 6 videos, each up to max_duration seconds (optional)."""
+    try:
+        logger.info(f"📥 Received timestamp overlay request: {len(videos)} video(s)")
+        if max_duration:
+            logger.info(f"⚙️  Request config: max_duration={max_duration}s")
+        else:
+            logger.info("⚙️  Request config: max_duration=None (process full video)")
+
+        if len(videos) > 6:
+            logger.warning(f"❌ Too many videos: {len(videos)} (max 6)")
+            raise HTTPException(status_code=400, detail="Maximum 6 videos allowed")
+
+        if len(videos) == 0:
+            logger.warning("❌ No videos provided")
+            raise HTTPException(status_code=400, detail="At least one video is required")
+
+        # Validate max_duration if provided
+        if max_duration is not None:
+            if not isinstance(max_duration, (int, float)) or max_duration <= 0:
+                logger.warning(f"❌ Invalid max_duration: {max_duration}")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"max_duration must be a positive number, got {max_duration}",
+                )
+
+            if max_duration > 60:
+                logger.warning(f"❌ Max duration too large: {max_duration}")
+                raise HTTPException(status_code=400, detail="max_duration cannot exceed 60 seconds")
+
+        # Read all video files into memory
+        video_data = []
+        for idx, video in enumerate(videos):
+            try:
+                if not video.filename:
+                    logger.warning(f"⚠️  Video {idx + 1} has no filename")
+                    video.filename = f"video_{idx + 1}.mp4"
+
+                # Read the file content into memory
+                try:
+                    content = await video.read()
+                except Exception as e:
+                    logger.error(f"❌ Failed to read video {video.filename}: {str(e)}")
+                    raise HTTPException(
+                        status_code=400, detail=f"Failed to read video {video.filename}: {str(e)}"
+                    )
+
+                if not content or len(content) == 0:
+                    logger.warning(f"❌ Video {video.filename} is empty")
+                    raise HTTPException(status_code=400, detail=f"Video {video.filename} is empty")
+
+                file_size_mb = len(content) / 1024 / 1024
+                logger.debug(f"📊 Video {video.filename}: {file_size_mb:.2f} MB")
+
+                if len(content) > 100 * 1024 * 1024:  # 100MB limit
+                    logger.warning(
+                        f"❌ Video {video.filename} too large: {file_size_mb:.2f} MB (max 100MB)"
+                    )
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Video {video.filename} is too large ({file_size_mb:.1f}MB). Maximum size is 100MB",
+                    )
+
+                # Store filename and bytes
+                video_data.append((video.filename, content))
+                logger.debug(f"✅ Loaded video {video.filename} into memory")
+
+            except HTTPException:
+                raise  # Re-raise HTTP exceptions
+            except Exception as e:
+                logger.error(f"❌ Error processing video {video.filename}: {str(e)}", exc_info=True)
+                raise HTTPException(
+                    status_code=400, detail=f"Error processing video {video.filename}: {str(e)}"
+                )
+
+        if len(video_data) == 0:
+            logger.error("❌ No valid videos to process")
+            raise HTTPException(status_code=400, detail="No valid videos to process")
+
+        # Process videos and return as downloadable files
+        try:
+            logger.info("🚀 Starting timestamp overlay processing...")
+
+            # For multiple videos, we'll return them as a zip or individual files
+            # For simplicity, process first video and return it
+            # In production, you might want to return a zip file for multiple videos
+            if len(video_data) > 1:
+                logger.warning(
+                    f"⚠️  Multiple videos provided ({len(video_data)}). Processing first video only."
+                )
+
+            filename, video_bytes = video_data[0]
+
+            # Process video with timestamp overlay
+            processed_video_bytes = add_timestamp_overlay(video_bytes, max_duration=max_duration)
+
+            logger.info(
+                f"✅ Timestamp overlay complete: {len(processed_video_bytes) / 1024 / 1024:.2f} MB"
+            )
+
+            # Generate output filename
+            # Note: The video is created with .avi extension (XVID codec for OpenCV compatibility)
+            # but we'll use .mp4 extension for user convenience (most players handle both)
+            base_name = os.path.splitext(filename)[0]
+            output_filename = f"{base_name}_timestamped.mp4"
+
+            # Return video file as response
+            from fastapi.responses import Response
+
+            # Use video/x-msvideo for AVI, but video/mp4 is more widely recognized
+            # The actual file format is AVI (XVID codec) for OpenCV compatibility
+            return Response(
+                content=processed_video_bytes,
+                media_type="video/mp4",  # Keep as mp4 for browser compatibility
+                headers={
+                    "Content-Disposition": f'attachment; filename="{output_filename}"',
+                    "Content-Length": str(len(processed_video_bytes)),
+                },
+            )
+
+        except ValueError as e:
+            error_msg = str(e)
+            logger.error(f"❌ Validation error: {error_msg}")
+            raise HTTPException(status_code=400, detail=error_msg)
+        except RuntimeError as e:
+            error_msg = str(e)
+            logger.error(f"❌ Processing error: {error_msg}")
+            raise HTTPException(status_code=500, detail=error_msg)
+        except Exception as e:
+            logger.error(f"❌ Timestamp overlay failed: {str(e)}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Timestamp overlay failed: {str(e)}")
+
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions
+    except Exception as e:
+        logger.error(f"❌ Unexpected error in timestamp_overlay_videos: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")

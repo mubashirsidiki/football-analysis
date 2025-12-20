@@ -1,5 +1,6 @@
 import { useState, useEffect, ErrorInfo, Component, ReactNode } from 'react'
 import VideoUploader from './components/VideoUploader'
+import VideoTimestampOverlay from './components/VideoTimestampOverlay'
 import AnalysisTable from './components/AnalysisTable'
 import SummaryPanel from './components/SummaryPanel'
 import { FrameAnalysis, AnalysisResponse } from './lib/types'
@@ -67,6 +68,7 @@ function App() {
   const [frames, setFrames] = useState<FrameAnalysis[]>([])
   const [error, setError] = useState<string | null>(null)
   const [analysisStatus, setAnalysisStatus] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<'analysis' | 'timestamp'>('analysis')
 
   useEffect(() => {
     console.log('📊 App component mounted')
@@ -96,6 +98,24 @@ function App() {
             Football Video Analysis
           </h1>
           
+          {/* Tab Navigation */}
+          <div className="mb-8 flex justify-center gap-2 border-b">
+            <Button
+              variant={activeTab === 'analysis' ? 'default' : 'ghost'}
+              onClick={() => setActiveTab('analysis')}
+              className="rounded-b-none"
+            >
+              Video Analysis
+            </Button>
+            <Button
+              variant={activeTab === 'timestamp' ? 'default' : 'ghost'}
+              onClick={() => setActiveTab('timestamp')}
+              className="rounded-b-none"
+            >
+              Timestamp Overlay
+            </Button>
+          </div>
+          
           {error && (
             <Card className="mb-8 border-destructive">
               <CardContent className="pt-6">
@@ -115,37 +135,45 @@ function App() {
             </Card>
           )}
 
-          {analysisStatus === 'partial' && (
-            <Card className="mb-8 border-amber-500 bg-amber-50 dark:bg-amber-950/20">
-              <CardContent className="pt-6">
-                <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
-                  <AlertCircle className="h-5 w-5" />
-                  <div className="flex-1">
-                    <p className="text-sm font-medium">Partial Analysis Results</p>
-                    <p className="text-xs mt-1 text-amber-600 dark:text-amber-500">
-                      API quota exhausted. Some frames were analyzed successfully, but others could not be processed due to daily quota limits (20 requests/day for free tier). Please upgrade your plan or try again tomorrow.
-                    </p>
-                  </div>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="mt-4"
-                  onClick={() => setAnalysisStatus(null)}
-                >
-                  Dismiss
-                </Button>
-              </CardContent>
-            </Card>
-          )}
-          
-          <VideoUploader onAnalysisComplete={handleAnalysisComplete} />
-          
-          {frames.length > 0 && (
+          {activeTab === 'analysis' && (
             <>
-              <SummaryPanel frames={frames} />
-              <AnalysisTable frames={frames} />
+              {analysisStatus === 'partial' && (
+                <Card className="mb-8 border-amber-500 bg-amber-50 dark:bg-amber-950/20">
+                  <CardContent className="pt-6">
+                    <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
+                      <AlertCircle className="h-5 w-5" />
+                      <div className="flex-1">
+                        <p className="text-sm font-medium">Partial Analysis Results</p>
+                        <p className="text-xs mt-1 text-amber-600 dark:text-amber-500">
+                          API quota exhausted. Some frames were analyzed successfully, but others could not be processed due to daily quota limits (20 requests/day for free tier). Please upgrade your plan or try again tomorrow.
+                        </p>
+                      </div>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-4"
+                      onClick={() => setAnalysisStatus(null)}
+                    >
+                      Dismiss
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
+              
+              <VideoUploader onAnalysisComplete={handleAnalysisComplete} />
+              
+              {frames.length > 0 && (
+                <>
+                  <SummaryPanel frames={frames} />
+                  <AnalysisTable frames={frames} />
+                </>
+              )}
             </>
+          )}
+
+          {activeTab === 'timestamp' && (
+            <VideoTimestampOverlay />
           )}
         </div>
       </div>

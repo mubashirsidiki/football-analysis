@@ -124,7 +124,9 @@ def extract_frames(
         current_frame = 0
         timestamp = 0.0
         extracted_count = 0
-        max_frames = int(actual_duration / fps_interval) + 1  # Safety limit based on actual duration
+        max_frames = (
+            int(actual_duration / fps_interval) + 1
+        )  # Safety limit based on actual duration
 
         try:
             while current_frame < max_frame_number and extracted_count < max_frames:
@@ -144,7 +146,9 @@ def extract_frames(
 
                 # Stop if we've exceeded max_duration
                 if timestamp >= max_duration:
-                    logger.debug(f"⏹️  Reached max_duration ({max_duration}s) at frame {current_frame}")
+                    logger.debug(
+                        f"⏹️  Reached max_duration ({max_duration}s) at frame {current_frame}"
+                    )
                     break
 
                 # Extract frame at specified intervals
