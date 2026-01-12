@@ -1,3 +1,8 @@
+google-cloud-key/
+google-cloud-key\gen-lang-client-0098002153-c6183e77db1e.json
+.copilot-ignore
+.claudeignore
+
 # Python
 __pycache__/
 *.py[cod]

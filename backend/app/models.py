@@ -242,6 +242,17 @@ class OffBallIntelligence(BaseModel):
         else:
             return 'unknown'
 
+    @field_validator('tsx_cognitive_index', mode='before')
+    @classmethod
+    def normalize_tsx_cognitive_index(cls, v):
+        """Normalize tsx_cognitive_index to string, handling numeric values."""
+        if v is None:
+            return 'unknown'
+        # Convert to string if not already (handles numeric values from Gemini)
+        if not isinstance(v, str):
+            return str(v)
+        return v.strip() if v.strip() else 'unknown'
+
 
 class FormationAnalysis(BaseModel):
     team_a_formation: str | None = Field(default="unknown", description="Team A formation")
