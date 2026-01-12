@@ -9,6 +9,8 @@ dependencies = [
     "python-multipart==0.0.6",
     "opencv-python>=4.9.0",
     "google-genai>=1.0.0",
+    "google-auth>=2.0.0",
+    "google-cloud-aiplatform>=1.38.0",
     "pydantic==2.5.0",
     "python-dotenv==1.0.0",
     "aiofiles==23.2.1",

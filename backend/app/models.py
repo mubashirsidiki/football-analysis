@@ -1,4 +1,3 @@
-
 from pydantic import BaseModel, Field, field_validator
 
 from app.logger import get_logger
@@ -17,12 +16,12 @@ class Player(BaseModel):
     role: str | None = Field(default="unknown", description="Player role/position")
     coordinates: list[float] = Field(description="Player coordinates [x, y]")
 
-    @field_validator('team', mode='before')
+    @field_validator("team", mode="before")
     @classmethod
     def normalize_team(cls, v):
         """Normalize team values to 'A', 'B', or 'unknown'."""
         if v is None:
-            return 'unknown'
+            return "unknown"
 
         # Convert to string if not already
         if not isinstance(v, str):
@@ -31,25 +30,25 @@ class Player(BaseModel):
         v_upper = v.upper().strip()
 
         # Handle various team representations
-        if v_upper in ['A', 'TEAM A', 'TEAMA', 'TEAM_A', 'TEAM 1', 'TEAM1', '1']:
-            return 'A'
-        elif v_upper in ['B', 'TEAM B', 'TEAMB', 'TEAM_B', 'TEAM 2', 'TEAM2', '2']:
-            return 'B'
+        if v_upper in ["A", "TEAM A", "TEAMA", "TEAM_A", "TEAM 1", "TEAM1", "1"]:
+            return "A"
+        elif v_upper in ["B", "TEAM B", "TEAMB", "TEAM_B", "TEAM 2", "TEAM2", "2"]:
+            return "B"
         else:
             # For any other value, return 'unknown' to avoid validation errors
             logger.debug(f"Normalizing unknown team value '{v}' to 'unknown'")
-            return 'unknown'
+            return "unknown"
 
-    @field_validator('shirt_number', mode='before')
+    @field_validator("shirt_number", mode="before")
     @classmethod
     def normalize_shirt_number(cls, v):
         """Normalize shirt_number to string, handling None and numeric values."""
         if v is None:
-            return 'unknown'
+            return "unknown"
         # Convert to string if not already (handles numeric values from Gemini)
         if not isinstance(v, str):
             return str(v)
-        return v.strip() if v.strip() else 'unknown'
+        return v.strip() if v.strip() else "unknown"
 
 
 class Ball(BaseModel):
@@ -63,9 +62,7 @@ class ScanMetrics(BaseModel):
     scan_frequency: str | None = Field(
         default="unknown", description="Head-turns per minute or 'unknown'"
     )
-    scan_quality: str | None = Field(
-        default="unknown", description="Quality of scanning behavior"
-    )
+    scan_quality: str | None = Field(default="unknown", description="Quality of scanning behavior")
     pre_reception_scans: str | None = Field(
         default="unknown",
         description="Number of scans 1-3 seconds before receiving ball or 'unknown'",
@@ -74,43 +71,43 @@ class ScanMetrics(BaseModel):
         default="unknown", description="Direction of head movement/scan"
     )
 
-    @field_validator('scan_quality', mode='before')
+    @field_validator("scan_quality", mode="before")
     @classmethod
     def normalize_scan_quality(cls, v):
         """Normalize scan quality values."""
         if v is None:
-            return 'unknown'
+            return "unknown"
         if not isinstance(v, str):
             v = str(v)
         v_lower = v.lower().strip()
-        if v_lower in ['good', 'excellent', 'high']:
-            return 'good'
-        elif v_lower in ['average', 'fair', 'medium', 'moderate']:
-            return 'average'
-        elif v_lower in ['poor', 'bad', 'low']:
-            return 'poor'
+        if v_lower in ["good", "excellent", "high"]:
+            return "good"
+        elif v_lower in ["average", "fair", "medium", "moderate"]:
+            return "average"
+        elif v_lower in ["poor", "bad", "low"]:
+            return "poor"
         else:
-            return 'unknown'
+            return "unknown"
 
-    @field_validator('head_movement_angle', mode='before')
+    @field_validator("head_movement_angle", mode="before")
     @classmethod
     def normalize_direction(cls, v):
         """Normalize direction values."""
         if v is None:
-            return 'unknown'
+            return "unknown"
         if not isinstance(v, str):
             v = str(v)
         v_lower = v.lower().strip()
-        if 'left' in v_lower or v_lower == 'l':
-            return 'left'
-        elif 'right' in v_lower or v_lower == 'r':
-            return 'right'
-        elif 'back' in v_lower or v_lower == 'b':
-            return 'backward'
-        elif 'forward' in v_lower or 'front' in v_lower or v_lower == 'f':
-            return 'forward'
+        if "left" in v_lower or v_lower == "l":
+            return "left"
+        elif "right" in v_lower or v_lower == "r":
+            return "right"
+        elif "back" in v_lower or v_lower == "b":
+            return "backward"
+        elif "forward" in v_lower or "front" in v_lower or v_lower == "f":
+            return "forward"
         else:
-            return 'unknown'
+            return "unknown"
 
 
 class DecisionIntelligence(BaseModel):
@@ -120,9 +117,7 @@ class DecisionIntelligence(BaseModel):
     simple_option: str | None = Field(
         default="unknown", description="Easiest/safest choice or 'unknown'"
     )
-    risk_level: str | None = Field(
-        default="unknown", description="Risk level of the decision"
-    )
+    risk_level: str | None = Field(default="unknown", description="Risk level of the decision")
     decision_time: str | None = Field(
         default="unknown", description="Time from first touch to action in seconds or 'unknown'"
     )
@@ -130,32 +125,30 @@ class DecisionIntelligence(BaseModel):
         default="unknown", description="Reaction time to pressure/movement in seconds or 'unknown'"
     )
 
-    @field_validator('risk_level', mode='before')
+    @field_validator("risk_level", mode="before")
     @classmethod
     def normalize_risk_level(cls, v):
         """Normalize risk level values."""
         if v is None:
-            return 'unknown'
+            return "unknown"
         if not isinstance(v, str):
             v = str(v)
         v_lower = v.lower().strip()
-        if v_lower in ['high', 'h']:
-            return 'high'
-        elif v_lower in ['medium', 'med', 'm', 'moderate']:
-            return 'medium'
-        elif v_lower in ['low', 'l']:
-            return 'low'
+        if v_lower in ["high", "h"]:
+            return "high"
+        elif v_lower in ["medium", "med", "m", "moderate"]:
+            return "medium"
+        elif v_lower in ["low", "l"]:
+            return "low"
         else:
-            return 'unknown'
+            return "unknown"
 
 
 class TechnicalExecution(BaseModel):
     pass_direction: str | None = Field(
         default="unknown", description="Direction of pass if applicable"
     )
-    pass_success: str | None = Field(
-        default="unknown", description="Whether pass was successful"
-    )
+    pass_success: str | None = Field(default="unknown", description="Whether pass was successful")
     dribbling_success: str | None = Field(
         default="unknown", description="Dribbling outcome if applicable"
     )
@@ -169,25 +162,25 @@ class TechnicalExecution(BaseModel):
         default="unknown", description="Classification of ball loss if applicable"
     )
 
-    @field_validator('execution_quality', mode='before')
+    @field_validator("execution_quality", mode="before")
     @classmethod
     def normalize_execution_quality(cls, v):
         """Normalize execution quality values."""
         if v is None:
-            return 'unknown'
+            return "unknown"
         if not isinstance(v, str):
             v = str(v)
         v_lower = v.lower().strip()
-        if v_lower in ['excellent', 'exc', 'very good', 'perfect']:
-            return 'excellent'
-        elif v_lower in ['good', 'g']:
-            return 'good'
-        elif v_lower in ['average', 'avg', 'fair', 'ok']:
-            return 'average'
-        elif v_lower in ['poor', 'bad', 'weak']:
-            return 'poor'
+        if v_lower in ["excellent", "exc", "very good", "perfect"]:
+            return "excellent"
+        elif v_lower in ["good", "g"]:
+            return "good"
+        elif v_lower in ["average", "avg", "fair", "ok"]:
+            return "average"
+        elif v_lower in ["poor", "bad", "weak"]:
+            return "poor"
         else:
-            return 'unknown'
+            return "unknown"
 
 
 class OffBallIntelligence(BaseModel):
@@ -204,54 +197,54 @@ class OffBallIntelligence(BaseModel):
         default="unknown", description="Overall football IQ score or 'unknown'"
     )
 
-    @field_validator('availability_index', 'progressive_opportunity_index', mode='before')
+    @field_validator("availability_index", "progressive_opportunity_index", mode="before")
     @classmethod
     def normalize_level(cls, v):
         """Normalize level values to high/medium/low/unknown."""
         if v is None:
-            return 'unknown'
+            return "unknown"
         if not isinstance(v, str):
             v = str(v)
         v_lower = v.lower().strip()
-        if v_lower in ['high', 'h']:
-            return 'high'
-        elif v_lower in ['medium', 'med', 'm', 'moderate']:
-            return 'medium'
-        elif v_lower in ['low', 'l']:
-            return 'low'
+        if v_lower in ["high", "h"]:
+            return "high"
+        elif v_lower in ["medium", "med", "m", "moderate"]:
+            return "medium"
+        elif v_lower in ["low", "l"]:
+            return "low"
         else:
-            return 'unknown'
+            return "unknown"
 
-    @field_validator('spatial_awareness', mode='before')
+    @field_validator("spatial_awareness", mode="before")
     @classmethod
     def normalize_quality(cls, v):
         """Normalize quality values to excellent/good/average/poor/unknown."""
         if v is None:
-            return 'unknown'
+            return "unknown"
         if not isinstance(v, str):
             v = str(v)
         v_lower = v.lower().strip()
-        if v_lower in ['excellent', 'exc', 'very good']:
-            return 'excellent'
-        elif v_lower in ['good', 'g']:
-            return 'good'
-        elif v_lower in ['average', 'avg', 'fair']:
-            return 'average'
-        elif v_lower in ['poor', 'bad', 'weak']:
-            return 'poor'
+        if v_lower in ["excellent", "exc", "very good"]:
+            return "excellent"
+        elif v_lower in ["good", "g"]:
+            return "good"
+        elif v_lower in ["average", "avg", "fair"]:
+            return "average"
+        elif v_lower in ["poor", "bad", "weak"]:
+            return "poor"
         else:
-            return 'unknown'
+            return "unknown"
 
-    @field_validator('tsx_cognitive_index', mode='before')
+    @field_validator("tsx_cognitive_index", mode="before")
     @classmethod
     def normalize_tsx_cognitive_index(cls, v):
         """Normalize tsx_cognitive_index to string, handling numeric values."""
         if v is None:
-            return 'unknown'
+            return "unknown"
         # Convert to string if not already (handles numeric values from Gemini)
         if not isinstance(v, str):
             return str(v)
-        return v.strip() if v.strip() else 'unknown'
+        return v.strip() if v.strip() else "unknown"
 
 
 class FormationAnalysis(BaseModel):
@@ -273,12 +266,12 @@ class GeminiStructuredResponse(BaseModel):
     ball: Ball = Field(description="Ball visibility and position")
     event: str = Field(description="Current event type")
 
-    @field_validator('event', mode='before')
+    @field_validator("event", mode="before")
     @classmethod
     def normalize_event(cls, v):
         """Normalize event values to allowed event types."""
         if v is None:
-            return 'unknown'
+            return "unknown"
 
         # Convert to string and lowercase
         if not isinstance(v, str):
@@ -288,21 +281,21 @@ class GeminiStructuredResponse(BaseModel):
 
         # Map common variations to standard event types
         event_mapping = {
-            'pass': 'pass',
-            'shot': 'shot',
-            'dribble': 'dribble',
-            'tackle': 'tackle',
-            'interception': 'interception',
-            'clearance': 'clearance',
-            'duel': 'duel',
-            'goal': 'goal',
-            'set_piece': 'set_piece',
-            'set piece': 'set_piece',
-            'transition': 'transition',
-            'none': 'none',
-            'unknown': 'unknown',
-            'no event': 'none',
-            'no action': 'none',
+            "pass": "pass",
+            "shot": "shot",
+            "dribble": "dribble",
+            "tackle": "tackle",
+            "interception": "interception",
+            "clearance": "clearance",
+            "duel": "duel",
+            "goal": "goal",
+            "set_piece": "set_piece",
+            "set piece": "set_piece",
+            "transition": "transition",
+            "none": "none",
+            "unknown": "unknown",
+            "no event": "none",
+            "no action": "none",
         }
 
         # Check exact match first
@@ -316,7 +309,8 @@ class GeminiStructuredResponse(BaseModel):
 
         # Default to 'unknown' if no match
         logger.debug(f"Normalizing unknown event value '{v}' to 'unknown'")
-        return 'unknown'
+        return "unknown"
+
     tactical_context: str | None = Field(default="", description="Tactical context of the frame")
     scan_metrics: ScanMetrics | None = Field(
         default_factory=ScanMetrics, description="Scanning and awareness metrics"
@@ -405,7 +399,9 @@ def transform_gemini_response(gemini_response: GeminiStructuredResponse) -> Fram
         unknown_team_players = [p for p in players_data if p.team not in ["A", "B"]]
 
         if unknown_team_players:
-            logger.debug(f"⚠️  Found {len(unknown_team_players)} players with unknown team assignment")
+            logger.debug(
+                f"⚠️  Found {len(unknown_team_players)} players with unknown team assignment"
+            )
 
         logger.debug(
             f"👥 Players detected: {len(players_data)} total (Team A: {len(team_a_players)}, Team B: {len(team_b_players)})"

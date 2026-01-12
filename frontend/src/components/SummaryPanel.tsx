@@ -103,7 +103,7 @@ export default function SummaryPanel({ frames }: SummaryPanelProps) {
               <Icon className={`h-4 w-4 ${stat.color}`} />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{stat.value}</div>
+              <div className="text-2xl font-bold break-words">{stat.value}</div>
               <p className="text-xs text-muted-foreground mt-1">{stat.description}</p>
             </CardContent>
           </Card>

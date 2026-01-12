@@ -32,7 +32,7 @@ AI-powered football match video analysis using Google Gemini Vision API. Extract
 - Python 3.11+
 - Node.js 18+
 - `uv` package manager
-- Google Gemini API key
+- Google Cloud service account key (for Vertex AI) OR Google Gemini API key
 
 ### Backend Setup
 
@@ -51,10 +51,25 @@ cd backend
 uv sync
 ```
 
-4. Create `.env` file:
-```
-GEMINI_API_KEY=your_api_key_here
-```
+4. Configure authentication (choose one method):
+
+   **Option A: Vertex AI with Service Account (Recommended)**
+   - Service account key is already in `backend/google-cloud-key/`
+   - Create `.env` file:
+     ```env
+     AUTH_METHOD=vertex_ai
+     MODEL_NAME=gemini-2.5-flash
+     ```
+   - Benefits: No rate limits, more reliable, production-ready
+
+   **Option B: API Key Authentication**
+   - Create `.env` file:
+     ```env
+     AUTH_METHOD=api_key
+     GEMINI_API_KEY=your_gemini_api_key_here
+     MODEL_NAME=gemini-2.5-flash
+     ```
+   - Benefits: Simpler setup for development
 
 5. Run server:
 ```powershell
@@ -75,10 +90,9 @@ cd frontend
 npm install
 ```
 
-3. Create `.env` file:
-```
-VITE_API_URL=http://localhost:8000
-```
+3. Configure API URL (Optional):
+   - Default: `http://localhost:8000`
+   - To customize, create `.env` file with: `VITE_API_URL=http://localhost:8000`
 
 4. Run dev server:
 ```powershell
@@ -89,26 +103,45 @@ App runs on `http://localhost:5173`
 
 ## Configuration
 
+### Backend Configuration
+
+**Authentication Method** (set in `backend/.env`):
+- `AUTH_METHOD=vertex_ai` (default, recommended): Uses service account key
+- `AUTH_METHOD=api_key`: Uses Gemini API key
+
+**Model Selection**:
+- `MODEL_NAME=gemini-2.5-flash` (default)
+- Other options: `gemini-1.5-pro`, `gemini-1.5-flash`, `gemini-2.0-flash-exp`
+
+**Video Processing**:
 - **Frame Interval**: Extract one frame every N seconds (default: 1s)
 - **Max Duration**: Process first N seconds of video (default: 10s)
   - Videos longer than this are automatically cropped
 
 ## Code Quality
 
+### Backend
+
 Install dev dependencies:
 ```powershell
+cd backend
 uv sync --extra dev
 ```
 
-Format code:
+Format code with Black:
 ```powershell
 uv run black app/
 ```
 
-Lint code:
+Lint code with Ruff:
 ```powershell
-uv run ruff check app/
-uv run ruff check --fix app/
+uv run ruff check app/          # Check for issues
+uv run ruff check --fix app/    # Auto-fix issues
+```
+
+Run both tools:
+```powershell
+uv run black app/ && uv run ruff check --fix app/
 ```
 
 ## API Endpoints
@@ -119,7 +152,7 @@ uv run ruff check --fix app/
 ## Project Structure
 
 ```
-frame/
+football-analysis/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py           # FastAPI routes
@@ -127,14 +160,15 @@ frame/
 │   │   ├── gemini_analyzer.py
 │   │   ├── models.py
 │   │   └── logger.py
+│   ├── google-cloud-key/     # Service account key
 │   ├── pyproject.toml
-│   └── .env
+│   └── run.py
 └── frontend/
     ├── src/
     │   ├── components/
     │   ├── lib/
     │   └── App.tsx
-    └── .env
+    └── package.json
 ```
 
 ## Notes

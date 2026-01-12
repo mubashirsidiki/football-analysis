@@ -1,5 +1,8 @@
 import { AnalysisResponse } from './types'
 
+// API URL configuration - defaults to localhost:8000
+// Optional: Override with VITE_API_URL environment variable if needed
+// Legacy: Used to require .env file, now defaults are sufficient
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 export interface AnalysisConfig {

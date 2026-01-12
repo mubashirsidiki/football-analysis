@@ -41,20 +41,75 @@ except ImportError:
 
 load_dotenv()
 
-# Initialize Gemini API
-api_key = os.getenv("GEMINI_API_KEY")
-if not api_key:
-    logger.error("❌ GEMINI_API_KEY not found in environment variables")
-    raise ValueError("GEMINI_API_KEY not found in environment variables")
+# Get authentication method from environment (default: vertex_ai)
+AUTH_METHOD = os.getenv("AUTH_METHOD", "vertex_ai").lower()
+logger.info(f"🔐 Authentication method: {AUTH_METHOD}")
 
-if USE_NEW_SDK:
-    # Use new Client API (recommended)
-    client = genai.Client(api_key=api_key)
-    logger.info("✅ Gemini API configured with new Client API (google-genai)")
+# Get model name from environment variable (default: gemini-2.5-flash)
+MODEL_NAME = os.getenv("MODEL_NAME", "gemini-2.5-flash")
+logger.info(f"🤖 Model selected: {MODEL_NAME}")
+
+# Initialize Gemini API based on authentication method
+service_account_key_path = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)),
+    "google-cloud-key",
+    "gen-lang-client-0098002153-c6183e77db1e.json",
+)
+
+if AUTH_METHOD == "vertex_ai" and os.path.exists(service_account_key_path):
+    # Vertex AI with service account authentication
+    import json
+
+    from google.oauth2 import service_account
+
+    with open(service_account_key_path) as f:
+        key_data = json.load(f)
+
+    logger.info(f"🔑 Using service account key: {os.path.basename(service_account_key_path)}")
+    logger.info(f"📊 Project: {key_data.get('project_id', 'Unknown')}")
+
+    # Create credentials from service account
+    credentials = service_account.Credentials.from_service_account_file(
+        service_account_key_path, scopes=["https://www.googleapis.com/auth/cloud-platform"]
+    )
+
+    if USE_NEW_SDK:
+        # Initialize Vertex AI with service account
+        import vertexai
+
+        vertexai.init(
+            project=key_data.get("project_id"), location="us-central1", credentials=credentials
+        )
+
+        from vertexai.generative_models import GenerativeModel
+
+        client = GenerativeModel(MODEL_NAME)
+        logger.info(f"✅ Gemini configured with Vertex AI + service account using {MODEL_NAME}")
+    else:
+        logger.error("❌ Service account authentication requires google-cloud-aiplatform SDK")
+        raise ValueError("Please use google-genai SDK with service account support")
+
+elif AUTH_METHOD == "api_key":
+    # Gemini API with API key authentication
+    logger.info("🔑 Using API key authentication")
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        logger.error("❌ GEMINI_API_KEY not found in environment variables")
+        raise ValueError("GEMINI_API_KEY is required when AUTH_METHOD=api_key")
+
+    if USE_NEW_SDK:
+        client = genai.Client(api_key=api_key)
+        logger.info(f"✅ Gemini API configured with API key using {MODEL_NAME}")
+    else:
+        genai.configure(api_key=api_key)
+        logger.info(f"✅ Gemini API configured with legacy SDK using {MODEL_NAME}")
+
 else:
-    # Use old SDK
-    genai.configure(api_key=api_key)
-    logger.info("✅ Gemini API configured with legacy SDK (google-generativeai)")
+    # Fallback error
+    logger.error(f"❌ Invalid AUTH_METHOD: {AUTH_METHOD} (use 'vertex_ai' or 'api_key')")
+    if not os.path.exists(service_account_key_path):
+        logger.error("❌ Service account key not found")
+    raise ValueError("Invalid AUTH_METHOD or missing credentials")
 
 # Rate limiting
 semaphore = asyncio.Semaphore(10)  # Max 10 concurrent requests
@@ -121,45 +176,38 @@ async def analyze_frame(frame_base64: str, timestamp: float, retries: int = 3) -
 
                 # Send image + prompt to Gemini with structured output
                 try:
-                    if USE_NEW_SDK:
-                        # New SDK: Use types.Part.from_bytes and Client API
-                        # Note: The new SDK's GenerateContentConfig doesn't accept response_json_schema
-                        # We'll use JSON mode and validate with Pydantic after receiving the response
-                        image_part = types.Part.from_bytes(data=frame_bytes, mime_type="image/jpeg")
+                    if AUTH_METHOD == "api_key":
+                        # API key authentication
+                        from google import genai as genai_client
 
+                        api_key = os.getenv("GEMINI_API_KEY")
+                        temp_client = genai_client.Client(api_key=api_key)
+
+                        image_part = types.Part.from_bytes(data=frame_bytes, mime_type="image/jpeg")
                         config = types.GenerateContentConfig(
                             response_mime_type="application/json",
                         )
 
-                        # New SDK uses synchronous calls, wrap in thread
                         response = await asyncio.to_thread(
-                            client.models.generate_content,
-                            model="gemini-2.5-flash",  # Use 2.5 for better object detection & segmentation
-                            contents=[
-                                image_part,
-                                prompt,
-                            ],  # Image first, then prompt (best practice)
+                            temp_client.models.generate_content,
+                            model=MODEL_NAME,
+                            contents=[image_part, prompt],
                             config=config,
                         )
-                    else:
-                        # Legacy SDK: Use generate_content_async with structured output
-                        model = genai.GenerativeModel("gemini-2.5-flash")
+                    elif AUTH_METHOD == "vertex_ai":
+                        # Vertex AI with service account
+                        from vertexai.generative_models import GenerationConfig, Part
 
-                        # Get JSON schema from Pydantic model
-                        json_schema = GeminiStructuredResponse.model_json_schema()
+                        image_part = Part.from_data(data=frame_bytes, mime_type="image/jpeg")
 
-                        # Legacy SDK uses generation_config parameter
-                        generation_config = {
-                            "response_mime_type": "application/json",
-                            "response_json_schema": json_schema,
-                        }
-
-                        response = await asyncio.wait_for(
-                            model.generate_content_async(
-                                [{"mime_type": "image/jpeg", "data": frame_bytes}, prompt],
-                                generation_config=generation_config,
-                            ),
-                            timeout=30.0,
+                        generation_config = GenerationConfig(
+                            response_mime_type="application/json",
+                        )
+                        # Vertex AI synchronous call, wrap in thread
+                        response = await asyncio.to_thread(
+                            client.generate_content,
+                            contents=[image_part, prompt],
+                            generation_config=generation_config,
                         )
                 except TimeoutError:
                     raise
