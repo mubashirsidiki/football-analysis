@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import os
+import re
 import time
 from typing import Any
 
@@ -41,13 +42,28 @@ except ImportError:
 
 load_dotenv()
 
+# Import all Google Cloud dependencies
+try:
+    from google.oauth2 import service_account
+except ImportError:
+    service_account = None  # Will be caught when used
+
+try:
+    import vertexai
+    from vertexai.generative_models import GenerationConfig, GenerativeModel, Part
+except ImportError:
+    vertexai = None  # Will be caught when used
+    GenerationConfig = None
+    GenerativeModel = None
+    Part = None
+
 # Get authentication method from environment (default: vertex_ai)
 AUTH_METHOD = os.getenv("AUTH_METHOD", "vertex_ai").lower()
-logger.info(f"🔐 Authentication method: {AUTH_METHOD}")
+logger.info(f"Authentication method: {AUTH_METHOD}")
 
 # Get model name from environment variable (default: gemini-2.5-flash)
 MODEL_NAME = os.getenv("MODEL_NAME", "gemini-2.5-flash")
-logger.info(f"🤖 Model selected: {MODEL_NAME}")
+logger.info(f"Model selected: {MODEL_NAME}")
 
 # Initialize Gemini API based on authentication method
 service_account_key_path = os.path.join(
@@ -58,9 +74,8 @@ service_account_key_path = os.path.join(
 
 if AUTH_METHOD == "vertex_ai" and os.path.exists(service_account_key_path):
     # Vertex AI with service account authentication
-    import json
-
-    from google.oauth2 import service_account
+    if service_account is None:
+        raise ImportError("google.oauth2.service_account is required for Vertex AI authentication")
 
     with open(service_account_key_path) as f:
         key_data = json.load(f)
@@ -75,13 +90,15 @@ if AUTH_METHOD == "vertex_ai" and os.path.exists(service_account_key_path):
 
     if USE_NEW_SDK:
         # Initialize Vertex AI with service account
-        import vertexai
+        if vertexai is None:
+            raise ImportError("vertexai is required for Vertex AI authentication with new SDK")
 
         vertexai.init(
             project=key_data.get("project_id"), location="us-central1", credentials=credentials
         )
 
-        from vertexai.generative_models import GenerativeModel
+        if GenerativeModel is None:
+            raise ImportError("vertexai.generative_models is required")
 
         client = GenerativeModel(MODEL_NAME)
         logger.info(f"✅ Gemini configured with Vertex AI + service account using {MODEL_NAME}")
@@ -178,10 +195,8 @@ async def analyze_frame(frame_base64: str, timestamp: float, retries: int = 3) -
                 try:
                     if AUTH_METHOD == "api_key":
                         # API key authentication
-                        from google import genai as genai_client
-
                         api_key = os.getenv("GEMINI_API_KEY")
-                        temp_client = genai_client.Client(api_key=api_key)
+                        temp_client = genai.Client(api_key=api_key)
 
                         image_part = types.Part.from_bytes(data=frame_bytes, mime_type="image/jpeg")
                         config = types.GenerateContentConfig(
@@ -196,7 +211,10 @@ async def analyze_frame(frame_base64: str, timestamp: float, retries: int = 3) -
                         )
                     elif AUTH_METHOD == "vertex_ai":
                         # Vertex AI with service account
-                        from vertexai.generative_models import GenerationConfig, Part
+                        if GenerationConfig is None or Part is None:
+                            raise ImportError(
+                                "vertexai.generative_models is required for Vertex AI"
+                            )
 
                         image_part = Part.from_data(data=frame_bytes, mime_type="image/jpeg")
 
@@ -332,8 +350,6 @@ async def analyze_frame(frame_base64: str, timestamp: float, retries: int = 3) -
                         if "retry" in error_msg.lower() and "s" in error_msg:
                             try:
                                 # Try to extract retry delay from message
-                                import re
-
                                 delay_match = re.search(r"(\d+(?:\.\d+)?)\s*s", error_msg)
                                 if delay_match:
                                     retry_delay = min(

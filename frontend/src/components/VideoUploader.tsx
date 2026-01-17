@@ -26,8 +26,9 @@ export default function VideoUploader({ onAnalysisComplete }: VideoUploaderProps
   const [maxDuration, setMaxDuration] = useState(10.0)
   const [showSettings, setShowSettings] = useState(false)
   const [analysisProgress, setAnalysisProgress] = useState(0)
+  const [analysisMode, setAnalysisMode] = useState<'frame' | 'multimodal'>('frame')
 
-  const validateVideo = (file: File): Promise<{ valid: boolean; duration: number; durationEstimated?: boolean; error?: string }> => {
+  const validateVideo = (file: File, mode: 'frame' | 'multimodal' = 'frame'): Promise<{ valid: boolean; duration: number; durationEstimated?: boolean; error?: string }> => {
     return new Promise((resolve) => {
       try {
         // Validate file type
@@ -41,10 +42,11 @@ export default function VideoUploader({ onAnalysisComplete }: VideoUploaderProps
           return
         }
 
-        // Validate file size (100MB limit)
-        const maxSize = 100 * 1024 * 1024 // 100MB
+        // Validate file size (different limits for different modes)
+        const maxSizeMB = mode === 'multimodal' ? 50 : 100
+        const maxSize = maxSizeMB * 1024 * 1024
         if (file.size > maxSize) {
-          resolve({ valid: false, duration: 0, error: `File size (${(file.size / 1024 / 1024).toFixed(1)}MB) exceeds 100MB limit` })
+          resolve({ valid: false, duration: 0, error: `File size (${(file.size / 1024 / 1024).toFixed(1)}MB) exceeds ${maxSizeMB}MB limit for ${mode} mode` })
           return
         }
 
@@ -165,8 +167,8 @@ export default function VideoUploader({ onAnalysisComplete }: VideoUploaderProps
 
       for (const file of fileArray) {
         try {
-          const validation = await validateVideo(file)
-          
+          const validation = await validateVideo(file, analysisMode)
+
           if (!validation.valid) {
             errors.push(`${file.name}: ${validation.error || 'Invalid video file'}`)
             continue
@@ -196,7 +198,7 @@ export default function VideoUploader({ onAnalysisComplete }: VideoUploaderProps
     } catch (error) {
       setError(`Failed to process files: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
-  }, [videos.length, maxDuration])
+  }, [videos.length, maxDuration, analysisMode])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -239,6 +241,7 @@ export default function VideoUploader({ onAnalysisComplete }: VideoUploaderProps
       const result = await uploadVideos(files, {
         frame_interval: frameInterval,
         max_duration: maxDuration,
+        analysis_mode: analysisMode,
       })
       clearInterval(progressInterval)
       setAnalysisProgress(100)
@@ -273,7 +276,11 @@ export default function VideoUploader({ onAnalysisComplete }: VideoUploaderProps
           <div>
             <CardTitle>Upload Videos</CardTitle>
             <CardDescription>
-              Upload up to 6 videos (will automatically process first {maxDuration}s if longer)
+              Upload up to 6 videos
+              {analysisMode === 'frame'
+                ? ` (will extract frames every ${frameInterval}s, max ${maxDuration}s)`
+                : ' (multimodal mode: analyzes entire video, max 50MB)'
+              }
             </CardDescription>
           </div>
           <Button
@@ -293,22 +300,60 @@ export default function VideoUploader({ onAnalysisComplete }: VideoUploaderProps
             <h3 className="text-sm font-semibold mb-3">Analysis Settings</h3>
             <div className="space-y-3">
               <div>
-                <label className="text-sm font-medium mb-1 block">
-                  Frame Interval: {frameInterval}s
+                <label className="text-sm font-medium mb-2 block">
+                  Analysis Mode
                 </label>
-                <input
-                  type="range"
-                  min="0.5"
-                  max="5"
-                  step="0.5"
-                  value={frameInterval}
-                  onChange={(e) => setFrameInterval(parseFloat(e.target.value))}
-                  className="w-full"
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Extract one frame every {frameInterval} seconds
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAnalysisMode('frame')}
+                    className={`p-3 text-sm rounded-md border transition-colors ${
+                      analysisMode === 'frame'
+                        ? 'bg-primary text-primary-foreground border-primary'
+                        : 'bg-background hover:bg-muted'
+                    }`}
+                  >
+                    <div className="font-medium">Frame-based</div>
+                    <div className="text-xs opacity-70">Extract frames & analyze with Gemini</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAnalysisMode('multimodal')}
+                    className={`p-3 text-sm rounded-md border transition-colors ${
+                      analysisMode === 'multimodal'
+                        ? 'bg-primary text-primary-foreground border-primary'
+                        : 'bg-background hover:bg-muted'
+                    }`}
+                  >
+                    <div className="font-medium">Multimodal</div>
+                    <div className="text-xs opacity-70">Analyze entire video with OpenRouter</div>
+                  </button>
+                </div>
+                <p className="text-xs text-muted-foreground mt-2">
+                  {analysisMode === 'frame'
+                    ? 'Extracts frames at intervals and analyzes each frame independently. Better for long videos.'
+                    : 'Analyzes the entire video at once. Better for understanding temporal context and movement patterns.'}
                 </p>
               </div>
+              {analysisMode === 'frame' && (
+                <div>
+                  <label className="text-sm font-medium mb-1 block">
+                    Frame Interval: {frameInterval}s
+                  </label>
+                  <input
+                    type="range"
+                    min="0.5"
+                    max="5"
+                    step="0.5"
+                    value={frameInterval}
+                    onChange={(e) => setFrameInterval(parseFloat(e.target.value))}
+                    className="w-full"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Extract one frame every {frameInterval} seconds
+                  </p>
+                </div>
+              )}
               <div>
                 <label className="text-sm font-medium mb-1 block">
                   Max Video Duration: {maxDuration}s

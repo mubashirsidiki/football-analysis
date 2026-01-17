@@ -1,4 +1,6 @@
 import base64
+import os
+import tempfile
 from io import BytesIO
 
 import cv2
@@ -51,9 +53,6 @@ def extract_frames(
         f"🎬 Starting frame extraction | Interval: {fps_interval}s | Max duration: {max_duration}s"
     )
     logger.debug(f"Video size: {len(video_bytes) / 1024 / 1024:.2f} MB")
-
-    import os
-    import tempfile
 
     tmp_path = None
     try:

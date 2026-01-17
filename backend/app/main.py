@@ -1,8 +1,11 @@
+import io
 import os
+import sys
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 
 from app.gemini_analyzer import ServiceUnavailableError, analyze_frames_batch
 from app.logger import get_logger
@@ -10,12 +13,27 @@ from app.models import (
     AnalysisConfig,
     AnalysisResponse,
     FrameAnalysis,
+    GeminiStructuredResponse,
     transform_gemini_response,
+)
+from app.openrouter_analyzer import (
+    QuotaExhaustedError as OpenRouterQuotaExhaustedError,
+)
+from app.openrouter_analyzer import (
+    ServiceUnavailableError as OpenRouterServiceUnavailableError,
+)
+from app.openrouter_analyzer import (
+    analyze_video_multimodal,
 )
 from app.video_processor import extract_frames
 from app.video_timestamp_overlay import add_timestamp_overlay
 
 load_dotenv()
+
+# Fix Windows console encoding to handle emoji characters
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 logger = get_logger("main")
 
@@ -50,125 +68,211 @@ async def process_videos(
 ) -> tuple[list[FrameAnalysis], bool]:
     """Process videos and analyze frames. Returns list of FrameAnalysis."""
     logger.info(
-        f"⚙️  Configuration: frame_interval={config.frame_interval}s, max_duration={config.max_duration}s"
+        f"⚙️  Configuration: mode={config.analysis_mode}, frame_interval={config.frame_interval}s, max_duration={config.max_duration}s"
     )
     logger.info(f"📹 Processing {len(video_data)} video(s)")
 
-    all_frames_data = []
-    total_frames = 0
     quota_exhausted = False
 
     try:
-        logger.info("📥 Step 1: Extracting frames from videos...")
+        if config.analysis_mode == "multimodal":
+            # MULTIMODAL MODE: Send entire videos to OpenRouter
+            logger.info("🎬 Using MULTIMODAL mode (OpenRouter)")
+            logger.info("📥 Step 1: Skipping frame extraction (multimodal mode)")
+            logger.info("🤖 Step 2: Analyzing videos with OpenRouter AI...")
 
-        # Step 1: Extract frames from all videos
-        for video_idx, (filename, video_bytes) in enumerate(video_data):
-            try:
-                logger.info(f"📹 Processing video {video_idx + 1}/{len(video_data)}: {filename}")
-                logger.debug(
-                    f"📊 Video {video_idx + 1} size: {len(video_bytes) / 1024 / 1024:.2f} MB"
-                )
+            frame_analyses = []
 
-                # Extract frames with configured interval
-                frames = extract_frames(
-                    video_bytes,
-                    fps_interval=config.frame_interval,
-                    max_duration=config.max_duration,
-                )
-                all_frames_data.extend(frames)
-                total_frames += len(frames)
-
-                logger.info(f"✅ Video {video_idx + 1}: Extracted {len(frames)} frames")
-            except ValueError as e:
-                # Video validation error (e.g., too long)
-                logger.error(f"❌ Video {video_idx + 1} validation error: {str(e)}")
-                continue
-            except Exception as e:
-                logger.error(
-                    f"❌ Error extracting frames from video {video_idx + 1}: {str(e)}",
-                    exc_info=True,
-                )
-                continue
-
-        if total_frames == 0:
-            logger.error("❌ No frames extracted from any video")
-            raise ValueError("No frames extracted from videos")
-
-        logger.info(f"📊 Total frames extracted: {total_frames}")
-        logger.info("🤖 Step 2: Analyzing frames with Gemini AI...")
-
-        # Step 2: Analyze frames with Gemini
-        try:
-            gemini_results = await analyze_frames_batch(all_frames_data, None)
-        except ServiceUnavailableError as e:
-            logger.error(f"❌ {str(e)}")
-            raise RuntimeError(str(e))
-        # Note: QuotaExhaustedError is now handled by returning partial results
-
-        # Check if quota was exhausted (indicated by default responses with quota error messages)
-        quota_exhausted = any(
-            "quota" in result.get("tactical_notes", "").lower()
-            and "exhausted" in result.get("tactical_notes", "").lower()
-            for result in gemini_results
-        )
-
-        if quota_exhausted:
-            successful_frames = sum(
-                1
-                for result in gemini_results
-                if "quota" not in result.get("tactical_notes", "").lower()
-            )
-            logger.warning(
-                f"⚠️  Quota exhausted: {successful_frames}/{len(gemini_results)} frames successfully analyzed"
-            )
-
-        logger.info(f"✅ Step 2 complete: Analyzed {len(gemini_results)} frames")
-        logger.info("🔄 Step 3: Transforming results...")
-
-        # Step 3: Transform results to FrameAnalysis
-        # Note: gemini_results are now validated Pydantic model dicts
-        frame_analyses = []
-        for gemini_result in gemini_results:
-            try:
-                # Validate the result is a dict (from model_dump())
-                if isinstance(gemini_result, dict):
-                    # Re-validate with Pydantic to ensure structure
-                    from app.models import GeminiStructuredResponse
-
-                    validated = GeminiStructuredResponse.model_validate(gemini_result)
-                    frame_analysis = transform_gemini_response(validated)
-                else:
-                    # Fallback: try to convert
-                    from app.models import GeminiStructuredResponse
-
-                    validated = GeminiStructuredResponse.model_validate(gemini_result)
-                    frame_analysis = transform_gemini_response(validated)
-                frame_analyses.append(frame_analysis)
-            except Exception as e:
-                logger.error(f"❌ Error transforming result: {str(e)}", exc_info=True)
-                # Create a default frame analysis for this timestamp
-                from app.models import FrameAnalysis
-
-                frame_analyses.append(
-                    FrameAnalysis(
-                        timestamp=(
-                            gemini_result.get("timestamp", 0.0)
-                            if isinstance(gemini_result, dict)
-                            else 0.0
-                        ),
-                        event="unknown",
-                        ball_position="Not visible",
-                        players_detected=0,
-                        team_a_shape="Unknown",
-                        team_b_shape="Unknown",
-                        tactical_notes=f"Error transforming response: {str(e)}",
+            for video_idx, (filename, video_bytes) in enumerate(video_data):
+                try:
+                    logger.info(
+                        f"📹 Processing video {video_idx + 1}/{len(video_data)}: {filename}"
                     )
+                    logger.debug(
+                        f"📊 Video {video_idx + 1} size: {len(video_bytes) / 1024 / 1024:.2f} MB"
+                    )
+
+                    # Analyze entire video (returns list of analyses at different timestamps)
+                    results = await analyze_video_multimodal(video_bytes)
+
+                    # Transform each result to FrameAnalysis
+                    for result in results:
+                        validated = GeminiStructuredResponse.model_validate(result)
+                        frame_analysis = transform_gemini_response(validated)
+                        frame_analyses.append(frame_analysis)
+
+                    logger.info(
+                        f"✅ Video {video_idx + 1}: Multimodal analysis complete ({len(results)} timestamp analyses)"
+                    )
+
+                except OpenRouterQuotaExhaustedError as e:
+                    logger.error(f"❌ OpenRouter quota exhausted: {str(e)}")
+                    quota_exhausted = True
+                    # Add default response for this video
+                    frame_analyses.append(
+                        FrameAnalysis(
+                            timestamp=0.0,
+                            event="unknown",
+                            ball_position="Not visible",
+                            players_detected=0,
+                            team_a_shape="Unknown",
+                            team_b_shape="Unknown",
+                            tactical_notes=f"Quota exhausted: {str(e)}",
+                        )
+                    )
+                    break  # Stop processing
+
+                except OpenRouterServiceUnavailableError as e:
+                    logger.error(f"❌ OpenRouter service unavailable: {str(e)}")
+                    quota_exhausted = True
+                    # Add default response
+                    frame_analyses.append(
+                        FrameAnalysis(
+                            timestamp=0.0,
+                            event="unknown",
+                            ball_position="Not visible",
+                            players_detected=0,
+                            team_a_shape="Unknown",
+                            team_b_shape="Unknown",
+                            tactical_notes=f"Service unavailable: {str(e)}",
+                        )
+                    )
+                    raise  # Re-raise to be caught by outer handler
+
+                except Exception as e:
+                    logger.error(
+                        f"❌ Error analyzing video {video_idx + 1}: {str(e)}", exc_info=True
+                    )
+                    # Add default response
+                    frame_analyses.append(
+                        FrameAnalysis(
+                            timestamp=0.0,
+                            event="unknown",
+                            ball_position="Not visible",
+                            players_detected=0,
+                            team_a_shape="Unknown",
+                            team_b_shape="Unknown",
+                            tactical_notes=f"Analysis failed: {str(e)}",
+                        )
+                    )
+                    continue
+
+            logger.info(f"✅ Multimodal analysis complete: {len(frame_analyses)} videos analyzed")
+            return frame_analyses, quota_exhausted
+
+        else:
+            # FRAME-BASED MODE: Extract frames and analyze with Gemini (existing logic)
+            logger.info("🖼️  Using FRAME-BASED mode (Gemini)")
+
+            all_frames_data = []
+            total_frames = 0
+
+            logger.info("📥 Step 1: Extracting frames from videos...")
+
+            # Step 1: Extract frames from all videos
+            for video_idx, (filename, video_bytes) in enumerate(video_data):
+                try:
+                    logger.info(
+                        f"📹 Processing video {video_idx + 1}/{len(video_data)}: {filename}"
+                    )
+                    logger.debug(
+                        f"📊 Video {video_idx + 1} size: {len(video_bytes) / 1024 / 1024:.2f} MB"
+                    )
+
+                    # Extract frames with configured interval
+                    frames = extract_frames(
+                        video_bytes,
+                        fps_interval=config.frame_interval,
+                        max_duration=config.max_duration,
+                    )
+                    all_frames_data.extend(frames)
+                    total_frames += len(frames)
+
+                    logger.info(f"✅ Video {video_idx + 1}: Extracted {len(frames)} frames")
+                except ValueError as e:
+                    # Video validation error (e.g., too long)
+                    logger.error(f"❌ Video {video_idx + 1} validation error: {str(e)}")
+                    continue
+                except Exception as e:
+                    logger.error(
+                        f"❌ Error extracting frames from video {video_idx + 1}: {str(e)}",
+                        exc_info=True,
+                    )
+                    continue
+
+            if total_frames == 0:
+                logger.error("❌ No frames extracted from any video")
+                raise ValueError("No frames extracted from videos")
+
+            logger.info(f"📊 Total frames extracted: {total_frames}")
+            logger.info("🤖 Step 2: Analyzing frames with Gemini AI...")
+
+            # Step 2: Analyze frames with Gemini
+            try:
+                gemini_results = await analyze_frames_batch(all_frames_data, None)
+            except ServiceUnavailableError as e:
+                logger.error(f"❌ {str(e)}")
+                raise RuntimeError(str(e))
+            # Note: QuotaExhaustedError is now handled by returning partial results
+
+            # Check if quota was exhausted (indicated by default responses with quota error messages)
+            quota_exhausted = any(
+                "quota" in result.get("tactical_notes", "").lower()
+                and "exhausted" in result.get("tactical_notes", "").lower()
+                for result in gemini_results
+            )
+
+            if quota_exhausted:
+                successful_frames = sum(
+                    1
+                    for result in gemini_results
+                    if "quota" not in result.get("tactical_notes", "").lower()
+                )
+                logger.warning(
+                    f"⚠️  Quota exhausted: {successful_frames}/{len(gemini_results)} frames successfully analyzed"
                 )
 
-        logger.info(f"✅ Step 3 complete: Transformed {len(frame_analyses)} frame analyses")
-        logger.info(f"✨ Analysis complete: {len(frame_analyses)} frames analyzed")
+            logger.info(f"✅ Step 2 complete: Analyzed {len(gemini_results)} frames")
+            logger.info("🔄 Step 3: Transforming results...")
 
-        return frame_analyses, quota_exhausted
+            # Step 3: Transform results to FrameAnalysis
+            # Note: gemini_results are now validated Pydantic model dicts
+            frame_analyses = []
+            for gemini_result in gemini_results:
+                try:
+                    # Validate the result is a dict (from model_dump())
+                    if isinstance(gemini_result, dict):
+                        # Re-validate with Pydantic to ensure structure
+                        validated = GeminiStructuredResponse.model_validate(gemini_result)
+                        frame_analysis = transform_gemini_response(validated)
+                    else:
+                        # Fallback: try to convert
+                        validated = GeminiStructuredResponse.model_validate(gemini_result)
+                        frame_analysis = transform_gemini_response(validated)
+                    frame_analyses.append(frame_analysis)
+                except Exception as e:
+                    logger.error(f"❌ Error transforming result: {str(e)}", exc_info=True)
+                    # Create a default frame analysis for this timestamp
+                    frame_analyses.append(
+                        FrameAnalysis(
+                            timestamp=(
+                                gemini_result.get("timestamp", 0.0)
+                                if isinstance(gemini_result, dict)
+                                else 0.0
+                            ),
+                            event="unknown",
+                            ball_position="Not visible",
+                            players_detected=0,
+                            team_a_shape="Unknown",
+                            team_b_shape="Unknown",
+                            tactical_notes=f"Error transforming response: {str(e)}",
+                        )
+                    )
+
+            logger.info(f"✅ Step 3 complete: Transformed {len(frame_analyses)} frame analyses")
+            logger.info(f"✨ Analysis complete: {len(frame_analyses)} frames analyzed")
+
+            return frame_analyses, quota_exhausted
 
     except Exception as e:
         logger.error(f"❌ Analysis failed: {str(e)}", exc_info=True)
@@ -180,12 +284,13 @@ async def analyze_videos(
     videos: list[UploadFile] = File(...),
     frame_interval: float = Form(1.0),
     max_duration: float = Form(10.0),
+    analysis_mode: str = Form("frame"),
 ):
     """Analyze uploaded videos. Max 6 videos, each up to max_duration seconds."""
     try:
         logger.info(f"📥 Received analysis request: {len(videos)} video(s)")
         logger.info(
-            f"⚙️  Request config: frame_interval={frame_interval}s, max_duration={max_duration}s"
+            f"⚙️  Request config: frame_interval={frame_interval}s, max_duration={max_duration}s, analysis_mode={analysis_mode}"
         )
 
         if len(videos) > 6:
@@ -219,7 +324,19 @@ async def analyze_videos(
             logger.warning(f"❌ Max duration too large: {max_duration}")
             raise HTTPException(status_code=400, detail="max_duration cannot exceed 60 seconds")
 
-        config = AnalysisConfig(frame_interval=frame_interval, max_duration=max_duration)
+        # Validate analysis_mode
+        if analysis_mode not in ["frame", "multimodal"]:
+            logger.warning(f"❌ Invalid analysis_mode: {analysis_mode}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"analysis_mode must be 'frame' or 'multimodal', got {analysis_mode}",
+            )
+
+        config = AnalysisConfig(
+            frame_interval=frame_interval,
+            max_duration=max_duration,
+            analysis_mode=analysis_mode,
+        )
 
         # Read all video files into memory before starting background task
         video_data = []
@@ -245,13 +362,19 @@ async def analyze_videos(
                 file_size_mb = len(content) / 1024 / 1024
                 logger.debug(f"📊 Video {video.filename}: {file_size_mb:.2f} MB")
 
-                if len(content) > 100 * 1024 * 1024:  # 100MB limit
+                # Different size limits for different modes
+                max_file_size = (
+                    50 * 1024 * 1024 if analysis_mode == "multimodal" else 100 * 1024 * 1024
+                )
+                max_size_mb = 50 if analysis_mode == "multimodal" else 100
+
+                if len(content) > max_file_size:
                     logger.warning(
-                        f"❌ Video {video.filename} too large: {file_size_mb:.2f} MB (max 100MB)"
+                        f"❌ Video {video.filename} too large: {file_size_mb:.2f} MB (max {max_size_mb}MB for {analysis_mode} mode)"
                     )
                     raise HTTPException(
                         status_code=413,
-                        detail=f"Video {video.filename} is too large ({file_size_mb:.1f}MB). Maximum size is 100MB",
+                        detail=f"Video {video.filename} is too large ({file_size_mb:.1f}MB). Maximum size for {analysis_mode} mode is {max_size_mb}MB",
                     )
 
                 # Store filename and bytes
@@ -421,8 +544,6 @@ async def timestamp_overlay_videos(
             output_filename = f"{base_name}_timestamped.mp4"
 
             # Return video file as response
-            from fastapi.responses import Response
-
             # Use video/x-msvideo for AVI, but video/mp4 is more widely recognized
             # The actual file format is AVI (XVID codec) for OpenCV compatibility
             return Response(

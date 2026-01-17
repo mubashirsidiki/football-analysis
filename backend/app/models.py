@@ -71,6 +71,16 @@ class ScanMetrics(BaseModel):
         default="unknown", description="Direction of head movement/scan"
     )
 
+    @field_validator("scan_frequency", mode="before")
+    @classmethod
+    def normalize_scan_frequency(cls, v):
+        """Normalize scan_frequency to string, handling numeric values."""
+        if v is None:
+            return "unknown"
+        if not isinstance(v, str):
+            return str(v)
+        return v.strip() if v.strip() else "unknown"
+
     @field_validator("scan_quality", mode="before")
     @classmethod
     def normalize_scan_quality(cls, v):
@@ -88,6 +98,16 @@ class ScanMetrics(BaseModel):
             return "poor"
         else:
             return "unknown"
+
+    @field_validator("pre_reception_scans", mode="before")
+    @classmethod
+    def normalize_pre_reception_scans(cls, v):
+        """Normalize pre_reception_scans to string, handling numeric values."""
+        if v is None:
+            return "unknown"
+        if not isinstance(v, str):
+            return str(v)
+        return v.strip() if v.strip() else "unknown"
 
     @field_validator("head_movement_angle", mode="before")
     @classmethod
@@ -124,6 +144,26 @@ class DecisionIntelligence(BaseModel):
     reaction_time: str | None = Field(
         default="unknown", description="Reaction time to pressure/movement in seconds or 'unknown'"
     )
+
+    @field_validator("decision_time", mode="before")
+    @classmethod
+    def normalize_decision_time(cls, v):
+        """Normalize decision_time to string, handling numeric values."""
+        if v is None:
+            return "unknown"
+        if not isinstance(v, str):
+            return str(v)
+        return v.strip() if v.strip() else "unknown"
+
+    @field_validator("reaction_time", mode="before")
+    @classmethod
+    def normalize_reaction_time(cls, v):
+        """Normalize reaction_time to string, handling numeric values."""
+        if v is None:
+            return "unknown"
+        if not isinstance(v, str):
+            return str(v)
+        return v.strip() if v.strip() else "unknown"
 
     @field_validator("risk_level", mode="before")
     @classmethod
@@ -363,6 +403,25 @@ class AnalysisResponse(BaseModel):
 class AnalysisConfig(BaseModel):
     frame_interval: float = 1.0  # Extract frame every N seconds
     max_duration: float = 10.0  # Maximum video duration in seconds
+    analysis_mode: str = "frame"  # "frame" for Gemini, "multimodal" for OpenRouter
+
+    @field_validator("analysis_mode", mode="before")
+    @classmethod
+    def normalize_analysis_mode(cls, v: str) -> str:
+        """Normalize analysis_mode to allowed values."""
+        if v is None:
+            return "frame"
+        if not isinstance(v, str):
+            v = str(v)
+        v_lower = v.lower().strip()
+        if v_lower in ["frame", "frames", "frame-based", "gemini"]:
+            return "frame"
+        elif v_lower in ["multimodal", "video", "openrouter", "full"]:
+            return "multimodal"
+        else:
+            # Default to frame-based for unknown values
+            logger.debug(f"Normalizing unknown analysis_mode '{v}' to 'frame'")
+            return "frame"
 
 
 def infer_formation(players: list[Player]) -> str:

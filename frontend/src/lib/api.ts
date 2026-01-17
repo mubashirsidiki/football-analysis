@@ -8,6 +8,7 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 export interface AnalysisConfig {
   frame_interval: number
   max_duration: number
+  analysis_mode: 'frame' | 'multimodal'
 }
 
 export async function uploadVideos(
@@ -32,6 +33,10 @@ export async function uploadVideos(
       throw new Error('Max duration must be greater than 0')
     }
 
+    if (config.analysis_mode !== 'frame' && config.analysis_mode !== 'multimodal') {
+      throw new Error('Analysis mode must be "frame" or "multimodal"')
+    }
+
     const formData = new FormData()
     files.forEach((file) => {
       if (!file || !(file instanceof File)) {
@@ -42,6 +47,7 @@ export async function uploadVideos(
     
     formData.append('frame_interval', config.frame_interval.toString())
     formData.append('max_duration', config.max_duration.toString())
+    formData.append('analysis_mode', config.analysis_mode)
 
     const response = await fetch(`${API_URL}/api/analyze`, {
       method: 'POST',
