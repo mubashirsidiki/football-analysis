@@ -132,7 +132,7 @@ export default function VideoUploader({ onAnalysisComplete }: VideoUploaderProps
         
         try {
           video.src = URL.createObjectURL(file)
-        } catch (e) {
+        } catch {
           if (!resolved) {
             resolved = true
             clearTimeout(timeout)
@@ -198,7 +198,7 @@ export default function VideoUploader({ onAnalysisComplete }: VideoUploaderProps
     } catch (error) {
       setError(`Failed to process files: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
-  }, [videos.length, maxDuration, analysisMode])
+  }, [videos.length, analysisMode])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()

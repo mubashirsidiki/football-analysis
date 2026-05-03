@@ -11,8 +11,22 @@ interface ProgressTrackerProps {
   isProcessing: boolean
 }
 
+type ProgressStatus = 'processing' | 'completed' | 'error'
+
+interface ProgressState {
+  processed: number
+  total: number
+  status: ProgressStatus
+  message: string
+}
+
 export default function ProgressTracker({ sessionId, onComplete, isProcessing }: ProgressTrackerProps) {
-  const [progress, setProgress] = useState({ processed: 0, total: 0, status: 'processing' as const, message: '' })
+  const [progress, setProgress] = useState<ProgressState>({
+    processed: 0,
+    total: 0,
+    status: 'processing',
+    message: '',
+  })
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {

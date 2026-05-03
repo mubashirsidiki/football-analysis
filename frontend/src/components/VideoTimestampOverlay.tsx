@@ -126,7 +126,7 @@ export default function VideoTimestampOverlay() {
         
         try {
           video.src = URL.createObjectURL(file)
-        } catch (e) {
+        } catch {
           if (!resolved) {
             resolved = true
             clearTimeout(timeout)

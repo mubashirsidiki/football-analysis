@@ -39,8 +39,8 @@ export default function AnalysisTable({ frames }: AnalysisTableProps) {
 
     // Apply sorting
     const sorted = [...filtered].sort((a, b) => {
-      let aVal: any
-      let bVal: any
+      let aVal: number | string
+      let bVal: number | string
 
       switch (sortField) {
         case 'timestamp':

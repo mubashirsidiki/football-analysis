@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from './ui/card'
 import { FrameAnalysis } from '@/lib/types'
 import { Activity, Users, Target, TrendingUp } from 'lucide-react'
 

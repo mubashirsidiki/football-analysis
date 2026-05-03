@@ -11,6 +11,13 @@ export interface AnalysisConfig {
   analysis_mode: 'frame' | 'multimodal'
 }
 
+export interface ProgressResponse {
+  processed: number
+  total: number
+  status: 'processing' | 'completed' | 'error'
+  message: string
+}
+
 export async function uploadVideos(
   files: File[],
   config: AnalysisConfig
@@ -178,5 +185,25 @@ export async function addTimestampOverlay(
     }
     throw error
   }
+}
+
+export async function getProgress(sessionId: string): Promise<ProgressResponse> {
+  const response = await fetch(`${API_URL}/api/progress/${sessionId}`)
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch progress (${response.status})`)
+  }
+
+  return response.json()
+}
+
+export async function getResults(sessionId: string): Promise<AnalysisResponse> {
+  const response = await fetch(`${API_URL}/api/results/${sessionId}`)
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch results (${response.status})`)
+  }
+
+  return response.json()
 }
 
