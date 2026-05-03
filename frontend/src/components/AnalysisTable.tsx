@@ -8,7 +8,6 @@ import {
   TableRow,
 } from './ui/table'
 import { Button } from './ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card'
 import { FrameAnalysis } from '@/lib/types'
 import { ArrowUpDown, Download } from 'lucide-react'
 
@@ -32,12 +31,10 @@ export default function AnalysisTable({ frames }: AnalysisTableProps) {
   const sortedAndFilteredFrames = useMemo(() => {
     let filtered = frames
 
-    // Apply event filter
     if (eventFilter !== 'all') {
       filtered = filtered.filter(f => f.event === eventFilter)
     }
 
-    // Apply sorting
     const sorted = [...filtered].sort((a, b) => {
       let aVal: number | string
       let bVal: number | string
@@ -79,18 +76,18 @@ export default function AnalysisTable({ frames }: AnalysisTableProps) {
   const getEventColor = (event: string) => {
     switch (event.toLowerCase()) {
       case 'goal':
-        return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+        return 'bg-green-500/20 text-green-400 border border-green-500/30'
       case 'shot':
-        return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
+        return 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30'
       case 'tackle':
       case 'duel':
-        return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+        return 'bg-red-500/20 text-red-400 border border-red-500/30'
       case 'pass':
-        return 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
+        return 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
       case 'dribble':
-        return 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200'
+        return 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
       default:
-        return 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200'
+        return 'bg-gray-500/20 text-gray-400 border border-gray-500/30'
     }
   }
 
@@ -103,7 +100,7 @@ export default function AnalysisTable({ frames }: AnalysisTableProps) {
       f.players_detected.toString(),
       f.team_a_shape,
       f.team_b_shape,
-      f.tactical_notes.replace(/"/g, '""') // Escape quotes
+      f.tactical_notes.replace(/"/g, '""')
     ])
 
     const csvContent = [
@@ -121,28 +118,32 @@ export default function AnalysisTable({ frames }: AnalysisTableProps) {
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex justify-between items-center">
-          <div>
-            <CardTitle>Frame Analysis Results</CardTitle>
-            <CardDescription>
-              {sortedAndFilteredFrames.length} of {frames.length} frames
-            </CardDescription>
+    <div className="glass-card w-full max-w-[1100px]">
+      <div className="p-6">
+        {/* Header */}
+        <div className="flex justify-between items-center pb-4 border-b border-[var(--border-color)]">
+          <div className="flex items-center gap-3">
+            <i className="fa-solid fa-table-cells text-[var(--primary-blue)] text-lg" />
+            <div>
+              <h2 className="text-lg font-semibold text-[var(--text-main)]">Frame Analysis Results</h2>
+              <p className="text-sm text-[var(--text-muted)]">
+                {sortedAndFilteredFrames.length} of {frames.length} frames
+              </p>
+            </div>
           </div>
-          <Button onClick={exportToCSV} variant="outline" size="sm">
+          <Button onClick={exportToCSV} variant="outline" size="sm" className="border-[var(--border-color)]">
             <Download className="h-4 w-4 mr-2" />
             Export CSV
           </Button>
         </div>
-      </CardHeader>
-      <CardContent>
-        <div className="mb-4 flex gap-2 items-center">
-          <label className="text-sm font-medium">Filter by event:</label>
+
+        {/* Filter */}
+        <div className="mb-4 flex gap-2 items-center mt-4">
+          <label className="text-sm font-medium text-[var(--text-muted)]">Filter by event:</label>
           <select
             value={eventFilter}
             onChange={(e) => setEventFilter(e.target.value)}
-            className="px-3 py-1 border border-input bg-background text-foreground rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            className="px-3 py-1.5 border border-[var(--border-color)] bg-[rgba(0,0,0,0.2)] text-[var(--text-main)] rounded-md text-sm focus:outline-none focus:border-[var(--primary-blue)]"
           >
             <option value="all">All Events</option>
             {eventTypes.map(event => (
@@ -151,70 +152,71 @@ export default function AnalysisTable({ frames }: AnalysisTableProps) {
           </select>
         </div>
 
-        <div className="rounded-md border overflow-x-auto max-w-full">
+        {/* Table */}
+        <div className="rounded-lg border border-[var(--border-color)] overflow-x-auto">
           <Table className="min-w-full">
             <TableHeader>
-              <TableRow>
-                <TableHead>
+              <TableRow className="border-[var(--border-color)] hover:bg-transparent">
+                <TableHead className="text-[var(--text-muted)] font-medium">
                   <Button
                     variant="ghost"
                     size="sm"
                     onClick={() => handleSort('timestamp')}
-                    className="h-8 px-2"
+                    className="h-8 px-2 text-[var(--text-muted)] hover:text-[var(--text-main)]"
                   >
                     Timestamp (s)
                     <ArrowUpDown className="ml-2 h-3 w-3" />
                   </Button>
                 </TableHead>
-                <TableHead>
+                <TableHead className="text-[var(--text-muted)] font-medium">
                   <Button
                     variant="ghost"
                     size="sm"
                     onClick={() => handleSort('event')}
-                    className="h-8 px-2"
+                    className="h-8 px-2 text-[var(--text-muted)] hover:text-[var(--text-main)]"
                   >
                     Event
                     <ArrowUpDown className="ml-2 h-3 w-3" />
                   </Button>
                 </TableHead>
-                <TableHead>Ball Position</TableHead>
-                <TableHead>
+                <TableHead className="text-[var(--text-muted)] font-medium">Ball Position</TableHead>
+                <TableHead className="text-[var(--text-muted)] font-medium">
                   <Button
                     variant="ghost"
                     size="sm"
                     onClick={() => handleSort('players_detected')}
-                    className="h-8 px-2"
+                    className="h-8 px-2 text-[var(--text-muted)] hover:text-[var(--text-main)]"
                   >
                     Players
                     <ArrowUpDown className="ml-2 h-3 w-3" />
                   </Button>
                 </TableHead>
-                <TableHead>Team A Shape</TableHead>
-                <TableHead>Team B Shape</TableHead>
-                <TableHead className="min-w-[400px] whitespace-nowrap">Tactical Notes</TableHead>
+                <TableHead className="text-[var(--text-muted)] font-medium">Team A Shape</TableHead>
+                <TableHead className="text-[var(--text-muted)] font-medium">Team B Shape</TableHead>
+                <TableHead className="text-[var(--text-muted)] font-medium min-w-[400px]">Tactical Notes</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {sortedAndFilteredFrames.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={7} className="text-center text-[var(--text-muted)] py-8">
                     No frames to display
                   </TableCell>
                 </TableRow>
               ) : (
                 sortedAndFilteredFrames.map((frame, index) => (
-                  <TableRow key={index}>
-                    <TableCell className="font-mono">{frame.timestamp.toFixed(1)}</TableCell>
+                  <TableRow key={index} className="border-[var(--border-color)] hover:bg-[rgba(255,255,255,0.02)]">
+                    <TableCell className="font-mono text-[var(--text-main)]">{frame.timestamp.toFixed(1)}</TableCell>
                     <TableCell>
                       <span className={`px-2 py-1 rounded text-xs font-medium ${getEventColor(frame.event)}`}>
                         {frame.event}
                       </span>
                     </TableCell>
-                    <TableCell className="text-sm">{frame.ball_position}</TableCell>
-                    <TableCell>{frame.players_detected}</TableCell>
-                    <TableCell className="text-sm">{frame.team_a_shape}</TableCell>
-                    <TableCell className="text-sm">{frame.team_b_shape}</TableCell>
-                    <TableCell className="text-sm min-w-[400px] whitespace-normal break-words">
+                    <TableCell className="text-sm text-[var(--text-muted)]">{frame.ball_position}</TableCell>
+                    <TableCell className="text-[var(--text-main)]">{frame.players_detected}</TableCell>
+                    <TableCell className="text-sm text-[var(--text-muted)]">{frame.team_a_shape}</TableCell>
+                    <TableCell className="text-sm text-[var(--text-muted)]">{frame.team_b_shape}</TableCell>
+                    <TableCell className="text-sm text-[var(--text-muted)] min-w-[400px] whitespace-normal break-words">
                       {frame.tactical_notes}
                     </TableCell>
                   </TableRow>
@@ -223,8 +225,7 @@ export default function AnalysisTable({ frames }: AnalysisTableProps) {
             </TableBody>
           </Table>
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   )
 }
-

@@ -1,7 +1,5 @@
 import { useState, useCallback } from 'react'
 import { Button } from './ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card'
-import { Progress } from './ui/progress'
 import { addTimestampOverlay } from '@/lib/api'
 import { X, Upload, Video, Settings, Download, Loader2, Clock } from 'lucide-react'
 
@@ -9,7 +7,7 @@ interface VideoFile {
   file: File
   preview: string
   duration: number
-  durationEstimated?: boolean // True if duration was estimated (browser couldn't read it)
+  durationEstimated?: boolean
   error?: string
 }
 
@@ -22,11 +20,11 @@ export default function VideoTimestampOverlay() {
   const [processedVideoBlob, setProcessedVideoBlob] = useState<Blob | null>(null)
   const [processedVideoName, setProcessedVideoName] = useState<string | null>(null)
   const [progress, setProgress] = useState(0)
+  const [dragOver, setDragOver] = useState(false)
 
   const validateVideo = (file: File): Promise<{ valid: boolean; duration: number; durationEstimated?: boolean; error?: string }> => {
     return new Promise((resolve) => {
       try {
-        // Validate file type
         if (!file || !(file instanceof File)) {
           resolve({ valid: false, duration: 0, error: 'Invalid file' })
           return
@@ -37,10 +35,9 @@ export default function VideoTimestampOverlay() {
           return
         }
 
-        // Validate file size (100MB limit)
-        const maxSize = 100 * 1024 * 1024 // 100MB
+        const maxSize = 100 * 1024 * 1024
         if (file.size > maxSize) {
-          resolve({ valid: false, duration: 0, error: `File size (${(file.size / 1024 / 1024).toFixed(1)}MB) exceeds 100MB limit` })
+          resolve({ valid: false, duration: 0, error: `File size exceeds 100MB limit` })
           return
         }
 
@@ -49,91 +46,55 @@ export default function VideoTimestampOverlay() {
           return
         }
 
-        // Try to get video metadata, but don't fail if browser can't play it
-        // (some formats like AVI work with OpenCV but not browser)
         const video = document.createElement('video')
         video.preload = 'metadata'
-        
+
         let resolved = false
-        let duration = 0
         const cleanup = () => {
-          if (video.src) {
-            URL.revokeObjectURL(video.src)
-          }
+          if (video.src) URL.revokeObjectURL(video.src)
         }
-        
+
         const timeout = setTimeout(() => {
           if (!resolved) {
             resolved = true
             cleanup()
-            // If browser can't read it, still allow it (backend OpenCV might handle it)
-            // Use a more reasonable duration estimate: ~1-2 MB per second for typical video
             const fileSizeMB = file.size / (1024 * 1024)
-            const estimatedDuration = Math.max(1, fileSizeMB / 1.5) // ~1.5 MB per second average
-            resolve({ valid: true, duration: estimatedDuration, durationEstimated: true })
+            const duration = Math.max(1, fileSizeMB / 1.5)
+            resolve({ valid: true, duration, durationEstimated: true })
           }
-        }, 5000) // Reduced timeout since we're more lenient
-        
+        }, 5000)
+
         video.onloadedmetadata = () => {
           if (resolved) return
           resolved = true
           clearTimeout(timeout)
           cleanup()
-          
-          duration = video.duration
-          
+          const duration = video.duration
           if (isNaN(duration) || duration <= 0) {
-            // Still allow it - backend will handle validation
-            // Use a more reasonable duration estimate
             const fileSizeMB = file.size / (1024 * 1024)
-            duration = Math.max(1, fileSizeMB / 1.5) // ~1.5 MB per second average
-            resolve({ valid: true, duration, durationEstimated: true })
+            resolve({ valid: true, duration: Math.max(1, fileSizeMB / 1.5), durationEstimated: true })
             return
           }
-          
           resolve({ valid: true, duration, durationEstimated: false })
         }
-        
+
         video.onerror = () => {
           if (resolved) return
-          
-          const errorMsg = video.error
-          
-          // For MEDIA_ERR_SRC_NOT_SUPPORTED, still allow the file
-          // (backend OpenCV can handle formats browsers can't)
-          if (errorMsg && errorMsg.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
-            resolved = true
-            clearTimeout(timeout)
-            cleanup()
-            // Estimate duration based on file size (more reasonable estimate)
-            const fileSizeMB = file.size / (1024 * 1024)
-            duration = Math.max(1, fileSizeMB / 1.5) // ~1.5 MB per second average
-            resolve({ valid: true, duration, durationEstimated: true })
-            return
-          }
-          
-          // For other errors, be more lenient but still try to resolve
-          if (!resolved) {
-            resolved = true
-            clearTimeout(timeout)
-            cleanup()
-            // Still allow it - let backend handle validation
-            const fileSizeMB = file.size / (1024 * 1024)
-            duration = Math.max(1, fileSizeMB / 1.5) // ~1.5 MB per second average
-            resolve({ valid: true, duration })
-          }
+          resolved = true
+          clearTimeout(timeout)
+          cleanup()
+          const fileSizeMB = file.size / (1024 * 1024)
+          resolve({ valid: true, duration: Math.max(1, fileSizeMB / 1.5), durationEstimated: true })
         }
-        
+
         try {
           video.src = URL.createObjectURL(file)
         } catch {
           if (!resolved) {
             resolved = true
             clearTimeout(timeout)
-            // Still allow it - backend will validate
             const fileSizeMB = file.size / (1024 * 1024)
-            duration = Math.max(1, fileSizeMB / 1.5) // ~1.5 MB per second average
-            resolve({ valid: true, duration, durationEstimated: true })
+            resolve({ valid: true, duration: Math.max(1, fileSizeMB / 1.5), durationEstimated: true })
           }
         }
       } catch (error) {
@@ -143,66 +104,66 @@ export default function VideoTimestampOverlay() {
   }
 
   const handleFileSelect = useCallback(async (files: FileList | null) => {
-    if (!files || files.length === 0) {
+    if (!files || files.length === 0) return
+
+    const fileArray = Array.from(files)
+
+    if (videos.length + fileArray.length > 6) {
+      setError('Maximum 6 videos allowed')
       return
     }
 
-    try {
-      const fileArray = Array.from(files)
-      
-      if (videos.length + fileArray.length > 6) {
-        setError('Maximum 6 videos allowed')
-        return
-      }
+    setError(null)
+    setProcessedVideoBlob(null)
+    setProcessedVideoName(null)
+    const newVideos: VideoFile[] = []
+    const errors: string[] = []
 
-      setError(null)
-      setProcessedVideoBlob(null)
-      setProcessedVideoName(null)
-      const newVideos: VideoFile[] = []
-      const errors: string[] = []
+    for (const file of fileArray) {
+      try {
+        const validation = await validateVideo(file)
 
-      for (const file of fileArray) {
-        try {
-          const validation = await validateVideo(file)
-          
-          if (!validation.valid) {
-            errors.push(`${file.name}: ${validation.error || 'Invalid video file'}`)
-            continue
-          }
-
-          const preview = URL.createObjectURL(file)
-          newVideos.push({
-            file,
-            preview,
-            duration: validation.duration,
-            durationEstimated: validation.durationEstimated || false,
-          })
-        } catch (error) {
-          errors.push(`${file.name}: ${error instanceof Error ? error.message : 'Validation failed'}`)
+        if (!validation.valid) {
+          errors.push(`${file.name}: ${validation.error || 'Invalid video file'}`)
+          continue
         }
-      }
 
-      if (errors.length > 0 && newVideos.length === 0) {
-        setError(errors.join('; '))
-      } else if (errors.length > 0) {
-        setError(`Some videos failed validation: ${errors.join('; ')}`)
+        const preview = URL.createObjectURL(file)
+        newVideos.push({
+          file,
+          preview,
+          duration: validation.duration,
+          durationEstimated: validation.durationEstimated || false,
+        })
+      } catch (error) {
+        errors.push(`${file.name}: ${error instanceof Error ? error.message : 'Validation failed'}`)
       }
+    }
 
-      if (newVideos.length > 0) {
-        setVideos((prev) => [...prev, ...newVideos])
-      }
-    } catch (error) {
-      setError(`Failed to process files: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    if (errors.length > 0 && newVideos.length === 0) {
+      setError(errors.join('; '))
+    } else if (errors.length > 0) {
+      setError(`Some videos failed validation: ${errors.join('; ')}`)
+    }
+
+    if (newVideos.length > 0) {
+      setVideos((prev) => [...prev, ...newVideos])
     }
   }, [videos.length])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
+    setDragOver(false)
     handleFileSelect(e.dataTransfer.files)
   }, [handleFileSelect])
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
+    setDragOver(true)
+  }, [])
+
+  const handleDragLeave = useCallback(() => {
+    setDragOver(false)
   }, [])
 
   const removeVideo = (index: number) => {
@@ -229,7 +190,6 @@ export default function VideoTimestampOverlay() {
     setProcessedVideoName(null)
 
     try {
-      // Simulate progress (since we don't have real-time progress from backend)
       const progressInterval = setInterval(() => {
         setProgress((prev) => {
           if (prev >= 90) return prev
@@ -239,11 +199,10 @@ export default function VideoTimestampOverlay() {
 
       const files = videos.map((v) => v.file)
       const blob = await addTimestampOverlay(files, maxDuration || undefined)
-      
+
       clearInterval(progressInterval)
       setProgress(100)
 
-      // Generate filename
       const baseName = videos[0].file.name.replace(/\.[^/.]+$/, '')
       const outputName = `${baseName}_timestamped.mp4`
 
@@ -268,18 +227,6 @@ export default function VideoTimestampOverlay() {
     URL.revokeObjectURL(url)
   }
 
-  const formatDuration = (seconds: number) => {
-    const hours = Math.floor(seconds / 3600)
-    const minutes = Math.floor((seconds % 3600) / 60)
-    const secs = Math.floor(seconds % 60)
-    const ms = Math.floor((seconds % 1) * 1000)
-    
-    if (hours > 0) {
-      return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${ms.toString().padStart(3, '0')}`
-    }
-    return `${minutes}:${secs.toString().padStart(2, '0')}.${ms.toString().padStart(3, '0')}`
-  }
-
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return bytes + ' B'
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
@@ -287,14 +234,18 @@ export default function VideoTimestampOverlay() {
   }
 
   return (
-    <Card className="mb-8">
-      <CardHeader>
-        <div className="flex justify-between items-start">
-          <div>
-            <CardTitle>Video Timestamp Overlay</CardTitle>
-            <CardDescription>
-              Add timestamp overlay (HH:MM:SS.mmm) to your videos and download the processed video
-            </CardDescription>
+    <div className="glass-card w-full max-w-[1100px]">
+      <div className="p-6">
+        {/* Header */}
+        <div className="flex justify-between items-start pb-4 border-b border-[var(--border-color)]">
+          <div className="flex items-center gap-3">
+            <i className="fa-solid fa-clock-rotate-left text-[var(--primary-blue)] text-lg" />
+            <div>
+              <h2 className="text-lg font-semibold text-[var(--text-main)]">Video Timestamp Overlay</h2>
+              <p className="text-sm text-[var(--text-muted)]">
+                Add timestamp overlay (HH:MM:SS.mmm) to your videos
+              </p>
+            </div>
           </div>
           <Button
             type="button"
@@ -306,14 +257,14 @@ export default function VideoTimestampOverlay() {
             <Settings className="h-4 w-4" />
           </Button>
         </div>
-      </CardHeader>
-      <CardContent>
+
+        {/* Settings */}
         {showSettings && (
-          <div className="mb-6 p-4 border rounded-lg space-y-4 bg-muted/50">
-            <h3 className="text-sm font-semibold mb-3">Processing Settings</h3>
+          <div className="mt-4 p-4 bg-[rgba(0,0,0,0.2)] rounded-lg space-y-4 border border-[var(--border-color)]">
+            <h3 className="text-sm font-semibold text-[var(--text-main)]">Processing Settings</h3>
             <div className="space-y-3">
               <div>
-                <label className="text-sm font-medium mb-1 block">
+                <label className="text-sm font-medium text-[var(--text-muted)] mb-1 block">
                   Max Video Duration: {maxDuration ? `${maxDuration}s` : 'Full video'}
                 </label>
                 <div className="flex items-center gap-4">
@@ -335,37 +286,36 @@ export default function VideoTimestampOverlay() {
                     size="sm"
                     onClick={() => setMaxDuration(null)}
                     disabled={maxDuration === null}
+                    className="border-[var(--border-color)]"
                   >
                     Full Video
                   </Button>
                 </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {maxDuration 
+                <p className="text-xs text-[var(--text-muted)] mt-1">
+                  {maxDuration
                     ? `Process only first ${maxDuration} seconds of video`
                     : 'Process full video duration'}
                 </p>
               </div>
-              <div className="p-3 bg-background rounded border">
+              <div className="p-3 bg-[rgba(0,0,0,0.2)] rounded border border-[var(--border-color)]">
                 <div className="flex items-center gap-2 text-sm">
-                  <Clock className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-muted-foreground">Timestamp Format:</span>
-                  <code className="px-2 py-1 bg-muted rounded text-xs font-mono">00:00:01.234</code>
-                  <span className="text-muted-foreground text-xs">(bottom-right corner)</span>
+                  <Clock className="h-4 w-4 text-[var(--text-muted)]" />
+                  <span className="text-[var(--text-muted)]">Timestamp Format:</span>
+                  <code className="px-2 py-1 bg-[rgba(255,255,255,0.05)] rounded text-xs font-mono text-[var(--text-main)]">00:00:01.234</code>
+                  <span className="text-[var(--text-muted)] text-xs">(bottom-right corner)</span>
                 </div>
               </div>
             </div>
           </div>
         )}
 
+        {/* Upload Zone */}
         <div
           onDrop={handleDrop}
           onDragOver={handleDragOver}
-          className="border-2 border-dashed border-muted-foreground/25 rounded-lg p-8 text-center hover:border-primary/50 transition-colors"
+          onDragLeave={handleDragLeave}
+          className={`upload-zone mt-4 ${dragOver ? 'drag-over' : ''}`}
         >
-          <Upload className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
-          <p className="text-sm text-muted-foreground mb-4">
-            Drag and drop videos here, or click to select
-          </p>
           <input
             type="file"
             accept="video/*"
@@ -375,57 +325,69 @@ export default function VideoTimestampOverlay() {
             id="timestamp-video-upload"
             disabled={isProcessing || videos.length >= 6}
           />
-          <Button
-            type="button"
-            variant="outline"
-            disabled={isProcessing || videos.length >= 6}
-            onClick={() => {
-              document.getElementById('timestamp-video-upload')?.click()
-            }}
-          >
-            Select Videos
-          </Button>
+
+          <div className="upload-content">
+            <i className="fa-solid fa-cloud-arrow-up upload-icon" />
+            <h3>Drag & Drop video file</h3>
+            <p>or click to browse from your computer</p>
+            <span className="file-hint">Supported formats: MP4, MOV, AVI (Max 100MB)</span>
+          </div>
         </div>
 
+        <Button
+          type="button"
+          variant="outline"
+          className="mt-4 w-full border-[var(--border-color)]"
+          disabled={isProcessing || videos.length >= 6}
+          onClick={() => document.getElementById('timestamp-video-upload')?.click()}
+        >
+          <Upload className="h-4 w-4 mr-2" />
+          Select Videos
+        </Button>
+
+        {/* Error */}
         {error && (
-          <div className="mt-4 p-3 bg-destructive/10 text-destructive rounded-md text-sm">
+          <div className="mt-4 p-3 bg-[rgba(239,68,68,0.1)] text-[#ef4444] rounded-md text-sm">
             {error}
           </div>
         )}
 
+        {/* Processing */}
         {isProcessing && (
-          <div className="mt-6 space-y-2">
+          <div className="mt-6 space-y-3">
             <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Processing video...</span>
-              <span className="font-medium">{progress}%</span>
+              <span className="text-[var(--text-muted)]">Processing video...</span>
+              <span className="font-medium text-[var(--text-main)]">{progress}%</span>
             </div>
-            <Progress value={progress} />
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <div className="h-2 bg-[rgba(255,255,255,0.1)] rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-[var(--primary-blue)] to-[var(--accent-teal)] transition-all duration-300"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+            <div className="flex items-center gap-2 text-sm text-[var(--text-muted)]">
               <Loader2 className="h-4 w-4 animate-spin" />
               <span>Adding timestamp overlay to frames...</span>
             </div>
           </div>
         )}
 
+        {/* Video list */}
         {videos.length > 0 && (
           <div className="mt-6 space-y-3">
-            <h3 className="text-sm font-medium">Selected Videos ({videos.length}/6)</h3>
+            <h3 className="text-sm font-medium text-[var(--text-muted)]">Selected Videos ({videos.length}/6)</h3>
             {videos.map((video, index) => (
               <div
                 key={index}
-                className="flex items-center gap-4 p-3 border rounded-lg"
+                className="flex items-center gap-4 p-3 bg-[rgba(0,0,0,0.2)] rounded-lg border border-[var(--border-color)]"
               >
-                <Video className="h-8 w-8 text-muted-foreground" />
+                <Video className="h-8 w-8 text-[var(--text-muted)]" />
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{video.file.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {video.durationEstimated ? (
-                      <span className="text-muted-foreground/70">Duration: Unknown</span>
-                    ) : (
-                      formatDuration(video.duration)
-                    )}
-                    {!video.durationEstimated && maxDuration && video.duration > maxDuration && (
-                      <span className="text-amber-600 dark:text-amber-400"> (will process first {maxDuration}s)</span>
+                  <p className="text-sm font-medium text-[var(--text-main)] truncate">{video.file.name}</p>
+                  <p className="text-xs text-[var(--text-muted)]">
+                    {video.durationEstimated ? 'Duration: Unknown' : video.duration.toFixed(1) + 's'}
+                    {maxDuration && video.duration > maxDuration && (
+                      <span className="text-amber-400"> (will process first {maxDuration}s)</span>
                     )}
                     {' • '}
                     {formatFileSize(video.file.size)}
@@ -437,6 +399,7 @@ export default function VideoTimestampOverlay() {
                   size="icon"
                   onClick={() => removeVideo(index)}
                   disabled={isProcessing}
+                  className="hover:bg-[rgba(239,68,68,0.2)]"
                 >
                   <X className="h-4 w-4" />
                 </Button>
@@ -445,31 +408,33 @@ export default function VideoTimestampOverlay() {
           </div>
         )}
 
+        {/* Process Button */}
         {videos.length > 0 && !isProcessing && !processedVideoBlob && (
           <Button
             onClick={handleProcess}
             disabled={isProcessing}
-            className="mt-6 w-full"
+            className="mt-6 w-full btn-primary btn-large btn-glow"
             size="lg"
           >
-            <Clock className="mr-2 h-4 w-4" />
+            <i className="fa-solid fa-wand-magic-sparkles mr-2" />
             Add Timestamp Overlay
           </Button>
         )}
 
+        {/* Success */}
         {processedVideoBlob && processedVideoName && (
-          <div className="mt-6 p-4 border rounded-lg bg-green-50 dark:bg-green-950/20 space-y-4">
-            <div className="flex items-center gap-2 text-green-700 dark:text-green-400">
+          <div className="mt-6 p-4 bg-[rgba(34,197,94,0.1)] border border-[rgba(34,197,94,0.3)] rounded-lg space-y-4">
+            <div className="flex items-center gap-2 text-green-400">
               <Download className="h-5 w-5" />
               <p className="text-sm font-medium">Video processed successfully!</p>
             </div>
-            <div className="text-sm text-muted-foreground">
+            <div className="text-sm text-[var(--text-muted)]">
               <p>File: {processedVideoName}</p>
               <p>Size: {formatFileSize(processedVideoBlob.size)}</p>
             </div>
             <Button
               onClick={handleDownload}
-              className="w-full"
+              className="w-full btn-primary btn-large"
               size="lg"
             >
               <Download className="mr-2 h-4 w-4" />
@@ -477,8 +442,7 @@ export default function VideoTimestampOverlay() {
             </Button>
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   )
 }
-
