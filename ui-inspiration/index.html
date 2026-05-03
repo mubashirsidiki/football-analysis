@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tactical Intelligence | AI Football Video Analytics</title>
+    <meta name="description"
+        content="AI-powered football video analysis platform. Upload your match video, choose an analysis template, and get instant tactical breakdowns.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <!-- Abstract Background Pattern -->
+    <div class="bg-pattern">
+        <div class="glow-orb primary"></div>
+        <div class="glow-orb secondary"></div>
+    </div>
+
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="logo">
+                <i class="fa-solid fa-chart-line"></i>
+                <span>Tactical<strong>IQ</strong></span>
+            </div>
+            <ul class="nav-links">
+                <li><a href="#" class="active">Analyze</a></li>
+                <li><a href="#">Solutions</a></li>
+                <li><a href="#">Pricing</a></li>
+            </ul>
+            <div class="nav-actions">
+                <a href="#" class="btn btn-outline">Log In</a>
+                <a href="#" class="btn btn-primary">Sign Up</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Hero Section -->
+    <main class="hero-section">
+        <div class="hero-content">
+            <h1 class="hero-title">Elevate Your Game with <span class="text-gradient">AI Analytics</span></h1>
+            <p class="hero-subtitle">Upload your match footage and generate instant, state-of-the-art tactical insights,
+                player assessments, and event breakdowns using built-in AI models.</p>
+        </div>
+
+        <div class="app-interface">
+            <!-- Left Panel: Video Upload -->
+            <div class="panel upload-panel glass-card">
+                <div class="panel-header">
+                    <h2><i class="fa-solid fa-video"></i> Match Footage</h2>
+                    <span class="badge">Step 1</span>
+                </div>
+
+                <div class="upload-zone" id="drop-zone">
+                    <input type="file" id="video-upload" accept="video/*" hidden>
+                    <div class="upload-content">
+                        <i class="fa-solid fa-cloud-arrow-up upload-icon"></i>
+                        <h3>Drag & Drop video file</h3>
+                        <p>or click to browse from your computer</p>
+                        <span class="file-hint">Supported formats: MP4, MOV, AVI (Max 2GB)</span>
+                    </div>
+                    <div class="file-preview hidden" id="file-preview">
+                        <div class="video-icon"><i class="fa-solid fa-film"></i></div>
+                        <div class="file-details">
+                            <span class="file-name" id="file-name">match_recording_q1.mp4</span>
+                            <span class="file-size" id="file-size">450 MB</span>
+                        </div>
+                        <button class="remove-btn" id="remove-file"><i class="fa-solid fa-xmark"></i></button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Panel: Analysis Configuration -->
+            <div class="panel config-panel glass-card">
+                <div class="panel-header">
+                    <h2><i class="fa-solid fa-sliders"></i> Analysis Output</h2>
+                    <span class="badge">Step 2</span>
+                </div>
+
+                <div class="config-tabs">
+                    <button class="tab-btn active" data-target="templates-tab">Pre-built Templates</button>
+                    <button class="tab-btn" data-target="custom-tab">Custom Prompt</button>
+                </div>
+
+                <div class="tab-content">
+                    <!-- Templates View -->
+                    <div class="tab-pane active" id="templates-tab">
+                        <p class="section-desc">Select an analysis model designed by football professionals.</p>
+
+                        <div class="template-grid">
+                            <label class="template-card">
+                                <input type="radio" name="template" value="match_summary" checked>
+                                <div class="template-card-inner">
+                                    <div class="card-icon"><i class="fa-solid fa-list-check"></i></div>
+                                    <div class="card-info">
+                                        <h4>Tactical Breakdown</h4>
+                                        <p>General match analysis, events, and formations.</p>
+                                    </div>
+                                    <div class="check-circle"><i class="fa-solid fa-check"></i></div>
+                                </div>
+                            </label>
+
+                            <label class="template-card">
+                                <input type="radio" name="template" value="cognitive_detail">
+                                <div class="template-card-inner">
+                                    <div class="card-icon"><i class="fa-solid fa-brain"></i></div>
+                                    <div class="card-info">
+                                        <h4>Deep Cognitive Analysis</h4>
+                                        <p>Scanning, decision-making KPIs, and risk assessment.</p>
+                                    </div>
+                                    <div class="check-circle"><i class="fa-solid fa-check"></i></div>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Custom Prompt View -->
+                    <div class="tab-pane" id="custom-tab">
+                        <div class="custom-schema-wrapper">
+                            <label class="section-desc">Define the exact data structure you want the AI to
+                                return.</label>
+
+                            <div class="schema-header">
+                                <span class="col-field">Field Name</span>
+                                <span class="col-type">Data Type</span>
+                                <span class="col-desc">Description</span>
+                                <span class="col-action"></span>
+                            </div>
+
+                            <div id="schema-rows-container" class="schema-rows-container">
+                                <!-- Initial Row -->
+                                <div class="schema-row">
+                                    <input type="text" class="schema-field" placeholder="e.g. key_events" required>
+                                    <select class="schema-type">
+                                        <option value="string">String</option>
+                                        <option value="number">Number</option>
+                                        <option value="boolean">Boolean</option>
+                                        <option value="array" selected>Array</option>
+                                        <option value="object">Object</option>
+                                    </select>
+                                    <input type="text" class="schema-desc" placeholder="e.g. List of all major events"
+                                        required>
+                                    <button class="remove-row-btn" title="Remove Field"><i
+                                            class="fa-solid fa-xmark"></i></button>
+                                </div>
+                            </div>
+
+                            <button id="add-schema-row" class="btn btn-outline outline-sm mt-3">
+                                <i class="fa-solid fa-plus"></i> Add Field
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="action-footer">
+                    <button class="btn btn-primary btn-large btn-glow" id="analyze-btn" disabled>
+                        <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Analysis
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Loading Overlay -->
+        <div class="processing-overlay hidden" id="processing-overlay">
+            <div class="spinner-container">
+                <div class="spinner"></div>
+                <div class="spinner-core"></div>
+            </div>
+            <h3>Analyzing Match Footage</h3>
+            <p>Our AI is breaking down tactical decisions and player actions...</p>
+            <div class="progress-bar">
+                <div class="progress-fill"></div>
+            </div>
+        </div>
+    </main>
+
+    <script src="script.js"></script>
+</body>
+
+</html>
